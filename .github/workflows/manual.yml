@@ -87,8 +87,8 @@ jobs:
                    -DARM_DYNAREC:BOOL=${{ github.event.inputs.dynarec }}\
                    -DHAVE_TRACE:BOOL=${{ github.event.inputs.trace }}\
                    -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
-                   -DANDROID=ON 
-                   -DTERMUX=ON -DARM_DYNAREC=ON -DBAD_SIGNAL=ON
+                   
+                    -DARM_DYNAREC=ON -DBAD_SIGNAL=ON
           make -j$(nproc) VERBOSE=1
 
       - name: "Upload Artifact"
