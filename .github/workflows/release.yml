@@ -1,4 +1,4 @@
-name: Build Box64 Android (Bionic)
+name: Build Box64 Android (Stable + Steam Wrapper)
 
 on:
   workflow_dispatch:
@@ -17,14 +17,12 @@ jobs:
           sudo apt-get install -y git cmake make python3 wget unzip
 
       - name: Setup Android NDK
-        # Mantendo a configuração NDK do seu release.yml original
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
           unzip -qq android-ndk-r26b-linux.zip
           echo "BOX64_COMPILER=$PWD/android-ndk-r26b/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang" >> $GITHUB_ENV
-          # Flags essenciais para Bionic + Fixes de Estabilidade (Steam/Unity)
-          # BAD_SIGNAL=1 é crucial para evitar crashes em jogos Steam no Android
-          echo "BOX64_PLATFORM_MACRO=-DANDROID=1 -DARM_DYNAREC=1 -DBAD_SIGNAL=1" >> $GITHUB_ENV
+          # Mantido o padrão estável que funcionou para você
+          echo "BOX64_PLATFORM_MACRO=-DANDROID=1 -DARM_DYNAREC=1" >> $GITHUB_ENV
 
       - name: Get Short Commit Hash
         id: git-info
@@ -35,10 +33,10 @@ jobs:
           mkdir build
           cd build
           
-          # Mantendo CMAKE_BUILD_TYPE=Release (Normal) como solicitado
+          # Flags do seu txt: RelWithDebInfo para performance com debug
           cmake .. -DCMAKE_C_COMPILER=${{ env.BOX64_COMPILER }} \
                    ${{ env.BOX64_PLATFORM_MACRO }} \
-                   -DCMAKE_BUILD_TYPE=Release \
+                   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                    -DHAVE_TRACE=0 \
                    -DZYDIS3=0 \
                    -DSTATICBUILD=0 \
@@ -46,23 +44,42 @@ jobs:
                    
           make -j$(nproc)
 
-      # Mantendo o empacotamento original do release.yml (.rat) para Android
-      - name: "Package Rat File"
+      - name: "Package Rat File with Steam Script"
         run: |
           cd build
           mkdir -p files/usr/bin
-          cp box64 files/usr/bin
+          
+          # 1. Copia o binário compilado
+          cp box64 files/usr/bin/
 
-          echo "name=Box64 (Bionic Build)" > pkg-header
+          # 2. CRIA O SCRIPT STEAM WRAPPER (A parte que faltava do txt)
+          # Isso cria o arquivo box64-steam que define o LD_PRELOAD
+          cat <<EOF > files/usr/bin/box64-steam
+          #!/bin/sh
+          # Wrapper script baseado no tutorial Box64 Steam API
+          
+          # Define onde o Box64 vai procurar a DLL "falsa" da Steam
+          # No Android/Winlator, $HOME geralmente é /home/xuser
+          export BOX64_PRELOAD_DLL="\$HOME/steam_dlls/steam_api.dll"
+          
+          # Executa o box64 real passando os argumentos
+          exec /usr/bin/box64 "\$@"
+          EOF
+
+          # Torna o script executável
+          chmod +x files/usr/bin/box64-steam
+
+          # Cria o cabeçalho do pacote MiceWine/Winlator
+          echo "name=Box64 (Steam Fix)" > pkg-header
           echo "category=Box64" >> pkg-header
           echo "version=${SHORT_COMMIT}" >> pkg-header
           echo "architecture=aarch64" >> pkg-header
 
-          # Cria o arquivo .rat original
-          7z -tzip -mx=5 a box64-android-bionic.rat files pkg-header
+          # Compacta tudo
+          7z -tzip -mx=5 a box64-android-steam.rat files pkg-header
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: box64-android-bionic
-          path: build/box64-android-bionic.rat
+          name: box64-android-steam
+          path: build/box64-android-steam.rat
