@@ -1,10 +1,10 @@
-name: Build Box64 (Winlator Bionic)
+name: Build Box64 Android (Bionic)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-android-bionic:
+  build-android:
     runs-on: ubuntu-latest
     
     steps:
@@ -17,61 +17,52 @@ jobs:
           sudo apt-get install -y git cmake make python3 wget unzip
 
       - name: Setup Android NDK
-        # Configuração retirada do seu release.yml original para garantir ambiente Android
+        # Mantendo a configuração NDK do seu release.yml original
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
           unzip -qq android-ndk-r26b-linux.zip
-          # Define o compilador Clang do NDK
           echo "BOX64_COMPILER=$PWD/android-ndk-r26b/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang" >> $GITHUB_ENV
-          # Flags cruciais para Winlator Bionic: DANDROID=1 e DARM_DYNAREC=1
+          # Flags essenciais para Bionic + Fixes de Estabilidade (Steam/Unity)
+          # BAD_SIGNAL=1 é crucial para evitar crashes em jogos Steam no Android
           echo "BOX64_PLATFORM_MACRO=-DANDROID=1 -DARM_DYNAREC=1 -DBAD_SIGNAL=1" >> $GITHUB_ENV
 
       - name: Get Short Commit Hash
         id: git-info
         run: echo "SHORT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      - name: Build Box64
+      - name: Build Box64 (Release)
         run: |
           mkdir build
           cd build
           
-          # Usando RelWithDebInfo conforme o seu arquivo .txt
+          # Mantendo CMAKE_BUILD_TYPE=Release (Normal) como solicitado
           cmake .. -DCMAKE_C_COMPILER=${{ env.BOX64_COMPILER }} \
                    ${{ env.BOX64_PLATFORM_MACRO }} \
-                   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-                   -DHAVE_TRACE=1 \
+                   -DCMAKE_BUILD_TYPE=Release \
+                   -DHAVE_TRACE=0 \
                    -DZYDIS3=0 \
                    -DSTATICBUILD=0 \
                    -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
                    
           make -j$(nproc)
 
-      - name: Package WCP for Winlator
+      # Mantendo o empacotamento original do release.yml (.rat) para Android
+      - name: "Package Rat File"
         run: |
           cd build
-          
-          # Criação do JSON de perfil para o Winlator reconhecer o pacote
-          cat <<EOF > profile.json
-          {
-            "type": "Box64",
-            "versionName": "bionic-${SHORT_COMMIT}",
-            "versionCode": 1,
-            "description": "Box64 (Bionic/NDK) build ${SHORT_COMMIT}. Optimized for standard Winlator.",
-            "files": [
-              {
-                "source": "box64",
-                "target": "\${localbin}/box64"
-              }
-            ]
-          }
-          EOF
-          
-          # Compacta em formato .wcp (Zstandard)
-          # Nota: Não usamos patchelf aqui pois queremos o linker nativo do Android
-          tar --zstd -cf box64-bionic-${SHORT_COMMIT}.wcp box64 profile.json
+          mkdir -p files/usr/bin
+          cp box64 files/usr/bin
+
+          echo "name=Box64 (Bionic Build)" > pkg-header
+          echo "category=Box64" >> pkg-header
+          echo "version=${SHORT_COMMIT}" >> pkg-header
+          echo "architecture=aarch64" >> pkg-header
+
+          # Cria o arquivo .rat original
+          7z -tzip -mx=5 a box64-android-bionic.rat files pkg-header
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: box64-bionic-wcp
-          path: build/box64-*.wcp
+          name: box64-android-bionic
+          path: build/box64-android-bionic.rat
