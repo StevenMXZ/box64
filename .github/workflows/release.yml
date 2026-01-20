@@ -164,7 +164,6 @@ jobs:
         run: exit 1
 
       # Use `steps.early-exit.outcome == 'failure'` to check whether the current step should be processed.
-
       - name: "Environment preparation"
         if: steps.early-exit.outcome == 'failure'
         run: |
@@ -182,7 +181,8 @@ jobs:
               wget -q https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
               unzip -qq android-ndk-r26b-linux.zip
               echo "BOX64_COMPILER=$PWD/android-ndk-r26b/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang" >> $GITHUB_ENV
-              echo "BOX64_PLATFORM_MARCRO=-DANDROID=1 -DARM_DYNAREC=1 -DBAD_SIGNAL=1" >> $GITHUB_ENV
+              # UPDATE: Flags solicitadas pelo usuário (BAD_SIGNAL, TERMUX, ANDROID, ARM_DYNAREC)
+              echo "BOX64_PLATFORM_MARCRO=-DBAD_SIGNAL=ON -DTERMUX=ON -DANDROID=ON -DARM_DYNAREC=ON" >> $GITHUB_ENV
               git clone https://github.com/termux/termux-docker.git
               sudo cp -rf termux-docker/system/arm /system
               sudo chown -R $(whoami):$(whoami) /system
