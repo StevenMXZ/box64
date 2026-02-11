@@ -1015,8 +1015,12 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 LDRSW_U12(x1, x3, 0);
                 PUSH1z(x1);
             } else {
-                MOV64z(x3, i64);
-                PUSH1z(x3);
+                if (!i64) {
+                    PUSH1z(xZR);
+                } else {
+                    MOV64z(x3, i64);
+                    PUSH1z(x3);
+                }
                 SMWRITE();
             }
             break;
@@ -1083,8 +1087,12 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
         case 0x6A:
             INST_NAME("PUSH Ib");
             i64 = F8S;
-            MOV64z(x3, i64);
-            PUSH1z(x3);
+            if (!i64) {
+                PUSH1z(xZR);
+            } else {
+                MOV64z(x3, i64);
+                PUSH1z(x3);
+            }
             SMWRITE();
             break;
         case 0x6B:
@@ -2866,7 +2874,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     *ok = 0;
                     *need_epilog = 1;
                 } else {
-                    MESSAGE(LOG_DUMP, "Native Call to %s\n", GetBridgeName((void*)ip) ?: GetNativeName(GetNativeFnc(ip)));
+                    MESSAGE(LOG_DUMP, "Native Call to %s\n", GetBridgeName((void*)ip) ?: GetNativeName(GetNativeFnc(ip), 1));
                     x87_stackcount(dyn, ninst, x1);
                     x87_forget(dyn, ninst, x3, x4, 0);
                     sse_purge07cache(dyn, ninst, x3);
@@ -3555,7 +3563,12 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
 
         case 0xD7:
             INST_NAME("XLAT");
-            UXTBw(x1, xRAX);
+            if(rex.seg) {
+                grab_segdata(dyn, addr, ninst, x1, rex.seg);
+                ADDz_UXTB(x1, x1, xRAX);
+            } else {
+                UXTBw(x1, xRAX);
+            }
             LDRB_REG(x1, xRBX, x1);
             BFIx(xRAX, x1, 0, 8);
             break;
@@ -3689,7 +3702,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             break;
         case 0xE8:
             INST_NAME("CALL Id");
-            i32 = F32S;
+            i32 = (rex.is32bits && rex.is66)?F16S:F32S;
             if(addr+i32==0) {
                 #if STEP == 3
                 printf_log(LOG_INFO, "Warning, CALL to 0x0 at %p (%p)\n", (void*)addr, (void*)(addr-1));
@@ -3726,7 +3739,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                         tmp=isSimpleWrapper(*(wrapper_t*)(dyn->insts[ninst].natcall+2));
                     } else
                         tmp=0;
-                    MESSAGE(LOG_DUMP, "Native Call to %s (retn=%d, simpleWrapper=%d)\n", GetBridgeName((void*)(dyn->insts[ninst].natcall - 1)) ?: GetNativeName(GetNativeFnc(dyn->insts[ninst].natcall - 1)), dyn->insts[ninst].retn, tmp);
+                    MESSAGE(LOG_DUMP, "Native Call to %s (retn=%d, simpleWrapper=%d)\n", GetBridgeName((void*)(dyn->insts[ninst].natcall - 1)) ?: GetNativeName(GetNativeFnc(dyn->insts[ninst].natcall - 1), 1), dyn->insts[ninst].retn, tmp);
                     if(dyn->insts[ninst].natcall && isRetX87Wrapper(*(wrapper_t*)(dyn->insts[ninst].natcall+2)))
                     // return value will be on the stack, so the stack depth needs to be updated
                         x87_purgecache(dyn, ninst, 0, x3, x1, x4);
@@ -3813,8 +3826,9 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     else
                         j64 = addr+i32;
                     jump_to_next(dyn, j64, 0, ninst, rex.is32bits);
-                    if(BOX64DRENV(dynarec_callret)>1) CALLRET_RET();
-                    if (BOX64DRENV(dynarec_callret) && addr >= (dyn->start + dyn->isize)) {
+                    int can_continue = (addr < (dyn->start + dyn->isize));
+                    CALLRET_RET(can_continue);
+                    if (BOX64DRENV(dynarec_callret) && !can_continue) {
                         // jumps out of current dynablock...
                         MARK;
                         j64 = getJumpTableAddress64(addr);
@@ -3841,7 +3855,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             } else {
                 if(opcode==0xE9) {
                     INST_NAME("JMP Id");
-                    i32 = F32S;
+                    i32 = (rex.is32bits && rex.is66)?F16S:F32S;
                 } else {
                     INST_NAME("JMP Ib");
                     i32 = F8S;
@@ -4055,6 +4069,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     UXTHw(x2, xRAX);
                     if(BOX64ENV(dynarec_div0)) {
                         CBNZw_MARK3(ed);
+                        MARK2;
                         GETIP_(ip);
                         STORE_XEMU_CALL(xRIP);
                         CALL_S(const_native_div0, -1);
@@ -4064,6 +4079,10 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                         MARK3;
                     }
                     UDIVw(x3, x2, ed);
+                    if(BOX64ENV(dynarec_div0)) {
+                        SUBw_UXTB(x4, x3, x3);
+                        CBNZw_MARK2(x4);
+                    }
                     MSUBw(x4, x3, ed, x2);  // x4 = x2 mod ed (i.e. x2 - x3*ed)
                     BFIx(xRAX, x3, 0, 8);
                     BFIx(xRAX, x4, 8, 8);
@@ -4089,6 +4108,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     GETSEB(x1, 0);
                     if(BOX64ENV(dynarec_div0)) {
                         CBNZw_MARK3(ed);
+                        MARK2;
                         GETIP_(ip);
                         STORE_XEMU_CALL(xRIP);
                         CALL_S(const_native_div0, -1);
@@ -4099,6 +4119,10 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     }
                     SXTHw(x2, xRAX);
                     SDIVw(x3, x2, ed);
+                    if(BOX64ENV(dynarec_div0)) {
+                        SUBw_SXTB(x4, x3, x3);
+                        CBNZw_MARK2(x4);
+                    }
                     MSUBw(x4, x3, ed, x2);  // x4 = x2 mod ed (i.e. x2 - x3*ed)
                     BFIx(xRAX, x3, 0, 8);
                     BFIx(xRAX, x4, 8, 8);
@@ -4227,6 +4251,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                         } else {
                             if(BOX64ENV(dynarec_div0)) {
                                 CBNZx_MARK3(ed);
+                                MARK2;
                                 GETIP_(ip);
                                 STORE_XEMU_CALL(xRIP);
                                 CALL_S(const_native_div0, -1);
@@ -4242,6 +4267,10 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                                 ed = x4;
                             }
                             UDIVx(x2, x3, ed);
+                            if(BOX64ENV(dynarec_div0)) {
+                                SUBx_UXTW(x5, x2, x2);
+                                CBNZw_MARK2(x5);
+                            }
                             MSUBx(x4, x2, ed, xRAX);
                             MOVw_REG(xRAX, x2);
                             MOVw_REG(xRDX, x4);
@@ -4311,6 +4340,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                         GETSEDw(0);
                         if(BOX64ENV(dynarec_div0)) {
                             CBNZx_MARK3(wb);
+                            MARK2;
                             GETIP_(ip);
                             STORE_XEMU_CALL(xRIP);
                             CALL_S(const_native_div0, -1);
@@ -4322,6 +4352,10 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                         MOVw_REG(x3, xRAX);
                         ORRx_REG_LSL(x3, x3, xRDX, 32);
                         SDIVx(x2, x3, wb);
+                        if(BOX64ENV(dynarec_div0)) {
+                            SUBx_SXTW(x5, x2, x2);
+                            CBNZw_MARK2(x5);
+                        }
                         MSUBx(x4, x2, wb, x3);
                         MOVw_REG(xRAX, x2);
                         MOVw_REG(xRDX, x4);
@@ -4333,6 +4367,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                             GETED(0);
                             if(BOX64ENV(dynarec_div0)) {
                                 CBNZx_MARK3(ed);
+                                MARK2;
                                 GETIP_(ip);
                                 STORE_XEMU_CALL(xRIP);
                                 CALL_S(const_native_div0, -1);
@@ -4342,10 +4377,11 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                                 MARK3;
                             }
                             SDIVx(x2, xRAX, ed);
+                            // there is no easy way to check for overflow here
                             MSUBx(xRDX, x2, ed, xRAX);
                             MOVx_REG(xRAX, x2);
                         } else {
-                            GETEDH(x1, 0);  // get edd changed addr, so cannot be called 2 times for same op...
+                            GETEDH(x1, 0);  // get ed changed addr, so cannot be called 2 times for same op...
                             if(BOX64ENV(dynarec_div0)) {
                                 CBNZx_MARK3(ed);
                                 GETIP_(ip);
@@ -4358,18 +4394,14 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                             }
                             //Need to see if RDX==0 and RAX not signed
                             // or RDX==-1 and RAX signed
-                            CBNZx_MARK2(xRDX);
-                            TBZ_MARK(xRAX, 63);
-                            MARK2;
-                            MVNx_REG(x2, xRDX);
-                            CBNZx_MARK3(x2);
-                            TBNZ_MARK(xRAX, 63);
-                            MARK3;
+                            SUBx_REG_ASR(x2, xRDX, xRAX, 63);
+                            CBZx_MARK(x2);
                             if(ed!=x1) {MOVx_REG(x1, ed);}
                             CALL(const_idiv64, -1);
-                            B_NEXT_nocond;
+                            B_NEXT_nocond;  // flags are done, so can jump to next directly
                             MARK;
                             SDIVx(x2, xRAX, ed);
+                            // no easy way to get overflow it seems
                             MSUBx(xRDX, x2, ed, xRAX);
                             MOVx_REG(xRAX, x2);
                         }
@@ -4496,8 +4528,9 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     }
                     PUSH1z(xRIP);
                     jump_to_next(dyn, 0, ed, ninst, rex.is32bits);
-                    if(BOX64DRENV(dynarec_callret)>1) CALLRET_RET();
-                    if (BOX64DRENV(dynarec_callret) && addr >= (dyn->start + dyn->isize)) {
+                    int can_continue = (addr < (dyn->start + dyn->isize));
+                    CALLRET_RET(can_continue);
+                    if (BOX64DRENV(dynarec_callret) && !can_continue) {
                         // jumps out of current dynablock...
                         MARK;
                         j64 = getJumpTableAddress64(addr);
@@ -4529,10 +4562,11 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                             *ok = 0;
                         }
                         GETIP_(addr);
+                        int can_continue = (addr < (dyn->start + dyn->isize));
                         if (BOX64DRENV(dynarec_callret)) {
                             SET_HASCALLRET();
                             // Push actual return address. Note that CS will not be tested, but that should be ok?
-                            if(addr < (dyn->start+dyn->isize)) {
+                            if(can_continue) {
                                 // there is a next...
                                 if(BOX64DRENV(dynarec_callret)>1)
                                     j64 = CALLRET_GETRET();
@@ -4550,8 +4584,8 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                         if (rex.w) PUSH2(x5, xRIP); else PUSH2_32(x5, xRIP);
                         STH(x3, xEmu, offsetof(x64emu_t, segs[_CS]));
                         jump_to_next(dyn, 0, ed, ninst, rex.is32bits);
-                        if(BOX64DRENV(dynarec_callret)>1) CALLRET_RET();
-                        if (BOX64DRENV(dynarec_callret) && addr >= (dyn->start + dyn->isize)) {
+                        CALLRET_RET(can_continue);
+                        if (BOX64DRENV(dynarec_callret) && !can_continue) {
                             // jumps out of current dynablock...
                             MARK;
                             j64 = getJumpTableAddress64(addr);

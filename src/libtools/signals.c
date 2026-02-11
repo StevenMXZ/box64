@@ -368,7 +368,7 @@ void copyUCTXreg2Emu(x64emu_t* emu, ucontext_t* p, uintptr_t ip) {
             flags = flags | (lbt_ctx->eflags & 0b100011010101);
             emu->eflags.x64 = flags;
         } else {
-            printf_log(LOG_NONE, "Are you on a non-LBT kernel? Use BOX64_DYNAREC_LA64NOEXT=lbt to prevent Box64 from using it.\n");
+            printf_log(LOG_NONE, "Are you on a non-LBT kernel? Use BOX64_DYNAREC_NOHOSTEXT=lbt to prevent Box64 from using it.\n");
             emu->eflags.x64 = CONTEXT_REG(p, xFlags);
         }
         #else
@@ -896,14 +896,14 @@ int unlockMutex()
     GO(mutex_prot, 1)
 
     GO(my_context->mutex_trace, 7)
-    #ifdef DYNAREC
     GO(my_context->mutex_dyndump, 8)
-    #else
-    GO(my_context->mutex_lock, 8)
-    #endif
     GO(my_context->mutex_tls, 9)
     GO(my_context->mutex_thread, 10)
     GO(my_context->mutex_bridge, 11)
+    #ifdef DYNAREC
+    #else
+    GO(my_context->mutex_lock, 12)
+    #endif
     #undef GO
 
     return ret;
@@ -931,14 +931,14 @@ int checkMutex(uint32_t mask)
     GO(mutex_prot, 1)
 
     GO(my_context->mutex_trace, 7)
-    #ifdef DYNAREC
     GO(my_context->mutex_dyndump, 8)
-    #else
-    GO(my_context->mutex_lock, 8)
-    #endif
     GO(my_context->mutex_tls, 9)
     GO(my_context->mutex_thread, 10)
     GO(my_context->mutex_bridge, 11)
+    #ifdef DYNAREC
+    #else
+    GO(my_context->mutex_lock, 12)
+    #endif
     #undef GO
 
     return ret;
@@ -952,7 +952,7 @@ void my_sigactionhandler_oldcode_64(x64emu_t* emu, int32_t sig, int simple, sigi
     int Locks = unlockMutex();
     int log_minimum = (BOX64ENV(showsegv))?LOG_NONE:LOG_DEBUG;
 
-    printf_log(LOG_DEBUG, "Sigactionhanlder for signal #%d called (jump to %p/%s)\n", sig, (void*)my_context->signals[sig], GetNativeName((void*)my_context->signals[sig]));
+    printf_log(LOG_DEBUG, "Sigactionhanlder for signal #%d called (jump to %p/%s)\n", sig, (void*)my_context->signals[sig], GetNativeName((void*)my_context->signals[sig], 1));
 
     uintptr_t restorer = my_context->restorer[sig];
     // get that actual ESP first!
@@ -978,15 +978,15 @@ void my_sigactionhandler_oldcode_64(x64emu_t* emu, int32_t sig, int simple, sigi
     int used_stack = 0;
     if(new_ss) {
         if(new_ss->ss_flags == SS_ONSTACK) { // already using it!
-            frame = ((uintptr_t)emu->regs[_SP].q[0] - 128) & ~0x0f;
+            frame = ((uintptr_t)emu->regs[_SP].q[0] - 128ULL) & ~0x0fULL;
         } else {
-            frame = (uintptr_t)(((uintptr_t)new_ss->ss_sp + new_ss->ss_size - 16) & ~0x0f);
+            frame = (uintptr_t)(((uintptr_t)new_ss->ss_sp + new_ss->ss_size - 16ULL) & ~0x0fULL);
             used_stack = 1;
             new_ss->ss_flags = SS_ONSTACK;
         }
     } else {
-        frame = frame&~15;
-        frame -= 0x200; // redzone
+        frame = frame&~15ULL;
+        frame -= 0x200ULL; // redzone
     }
 
     // TODO: do I need to really setup 2 stack frame? That doesn't seems right!
@@ -1168,7 +1168,7 @@ void my_sigactionhandler_oldcode_64(x64emu_t* emu, int32_t sig, int simple, sigi
         sigcontext->uc_mcontext.gregs[X64_TRAPNO] = info->si_code;
         sigcontext->uc_mcontext.gregs[X64_ERR] = 0;
     } else {
-        skip = 3;   // other signal can resume in interpretor
+        skip = 3;   // other signal can resume in dynarec
     }
     //TODO: SIGABRT generate what?
     printf_log((sig==10)?LOG_DEBUG:log_minimum, "Signal %d: si_addr=%p, TRAPNO=%d, ERR=%d, RIP=%p, prot=%x, mmapped:%d\n", sig, (void*)info2->si_addr, sigcontext->uc_mcontext.gregs[X64_TRAPNO], sigcontext->uc_mcontext.gregs[X64_ERR],sigcontext->uc_mcontext.gregs[X64_RIP], prot, mmapped);
@@ -1558,6 +1558,14 @@ void my_box64signalhandler(int32_t sig, siginfo_t* info, void * ucntx)
                             ClearCache(db->block, db->size);
                         }
                         protectDBJumpTable((uintptr_t)db->x64_addr, db->x64_size, db->block, db->jmpnext);
+                        for(int i=0; i<db->sep_size; ++i) {
+                            uint32_t x64_offs = db->sep[i].x64_offs;
+                            uint32_t nat_offs = db->sep[i].nat_offs;
+                            if(addJumpTableIfDefault64(db->x64_addr+x64_offs, (db->always_test)?db->jmpnext:(db->block+nat_offs)))
+                                db->sep[i].active = 1;
+                            else
+                                db->sep[i].active = 0;
+                        }
                     }
                     return;
                 } else {
@@ -1663,7 +1671,7 @@ void my_box64signalhandler(int32_t sig, siginfo_t* info, void * ucntx)
                 snprintf(tmp, 127, " %sopcode=%s; native opcode=%08x", (emu->segs[_CS] == 0x23) ? "x86" : "x64", DecodeX64Trace(dec, x64pc, 1), *(uint32_t*)pc);
                 else
                 snprintf(tmp, 127, " %sopcode=%02X %02X %02X %02X %02X %02X %02X %02X (opcode=%08x)", (emu->segs[_CS] == 0x23) ? "x86" : "x64", ((uint8_t*)x64pc)[0], ((uint8_t*)x64pc)[1], ((uint8_t*)x64pc)[2], ((uint8_t*)x64pc)[3], ((uint8_t*)x64pc)[4], ((uint8_t*)x64pc)[5], ((uint8_t*)x64pc)[6], ((uint8_t*)x64pc)[7], *(uint32_t*)pc);
-                dynarec_log(LOG_INFO, "Writting from %04d|%p(%s, native=%s) to %p using %s\n", GetTID(), (void*)x64pc, getAddrFunctionName(x64pc), db?"Dynablock":GetNativeName(pc),(void*)addr, tmp);
+                dynarec_log(LOG_INFO, "Writting from %04d|%p(%s, native=%s) to %p using %s\n", GetTID(), (void*)x64pc, getAddrFunctionName(x64pc), db?"Dynablock":GetNativeName(pc, 1),(void*)addr, tmp);
             }
             // if there is no write permission, don't return and continue to program signal handling
             unlock_signal();
@@ -1801,7 +1809,7 @@ dynarec_log(/*LOG_DEBUG*/LOG_INFO, "%04d|Repeated SIGSEGV with Access error on %
                 // segfault while gathering function name...
                 name = "???";
             } else
-                name = GetNativeName(pc);
+                name = GetNativeName(pc, 1);
             signal_jmpbuf_active = 0;
         }
         // Adjust RIP for special case of NULL function run
