@@ -232,6 +232,7 @@ static void applyCustomRules()
         } else if (!strcasecmp(box64env.profile, "default")) {
         } else if (!strcasecmp(box64env.profile, "fast")) {
             SET_BOX64ENV_IF_EMPTY(dynarec_callret, 1);
+            SET_BOX64ENV_IF_EMPTY(dynarec_sep, 1);
             SET_BOX64ENV_IF_EMPTY(dynarec_bigblock, 3);
             SET_BOX64ENV_IF_EMPTY(dynarec_safeflags, 0);
             SET_BOX64ENV_IF_EMPTY(dynarec_strongmem, 1);
@@ -239,6 +240,7 @@ static void applyCustomRules()
             SET_BOX64ENV_IF_EMPTY(dynarec_forward, 1024);
         } else if (!strcasecmp(box64env.profile, "fastest")) {
             SET_BOX64ENV_IF_EMPTY(dynarec_callret, 1);
+            SET_BOX64ENV_IF_EMPTY(dynarec_sep, 2);
             SET_BOX64ENV_IF_EMPTY(dynarec_bigblock, 3);
             SET_BOX64ENV_IF_EMPTY(dynarec_safeflags, 0);
             SET_BOX64ENV_IF_EMPTY(dynarec_strongmem, 0);
@@ -255,6 +257,10 @@ static void applyCustomRules()
 
     if (box64env.maxcpu == 0 || (box64env.new_maxcpu < box64env.maxcpu)) {
         box64env.maxcpu = box64env.new_maxcpu;
+        if (box64env.maxcpu && box64_sysinfo.ncpu > (uint64_t)box64env.maxcpu) {
+            box64_sysinfo.box64_ncpu = (uint64_t)box64env.maxcpu;
+        }
+
     }
 
 #ifndef _WIN32
@@ -326,6 +332,8 @@ static void freeEnv(box64env_t* env)
 #define ENV_ARCH "rv64"
 #elif defined(LA64)
 #define ENV_ARCH "la64"
+#elif defined(PPC64LE)
+#define ENV_ARCH "ppc64le"
 #elif defined(X86_64)
 #define ENV_ARCH "x86_64"
 #else
@@ -774,6 +782,17 @@ void RecordEnvMappings(uintptr_t addr, size_t length, int fd)
     if (!filename) return;
 
     char* lowercase_filename = LowerCase(filename);
+    if(strstr(lowercase_filename, "/memfd:")==lowercase_filename) {
+        // memfd, first remove the (deleted) at the end
+        char* p = strstr(lowercase_filename, " (deleted)");
+        if(p=lowercase_filename+strlen(lowercase_filename)-strlen(" (deleted)"))
+            *p = 0;
+        // add the "/fd" at the end to differenciate between memfd
+        char* new_name = box_calloc(1, strlen(lowercase_filename)+100);
+        sprintf(new_name, "%s/%d", lowercase_filename, fd);
+        box_free(lowercase_filename);
+        lowercase_filename = new_name;
+    }
     mutex_lock(&my_context->mutex_dyndump);
     int ret;
     mapping_t* mapping = NULL;
@@ -792,12 +811,12 @@ void RecordEnvMappings(uintptr_t addr, size_t length, int fd)
             if (k != kh_end(box64env_entries))
                 mapping->env = &kh_value(box64env_entries, k);
         }
-        dynarec_log(LOG_INFO, "Mapping %s (%s) in %p-%p\n", fullname, lowercase_filename, (void*)addr, (void*)(addr+length));
+        dynarec_log(LOG_INFO, "Mapping of fd:%d %s (%s) in %p-%p\n", fd, fullname, lowercase_filename, (void*)addr, (void*)(addr+length));
     } else
         mapping = kh_value(mapping_entries, k);
 
     if(mapping && mapping->start>addr) { 
-        dynarec_log(LOG_INFO, "Ignoring Mapping %s (%s) adjusted start: %p from %p\n", fullname, lowercase_filename, (void*)addr, (void*)(mapping->start)); 
+        dynarec_log(LOG_INFO, "Ignoring Mapping of fd:%d %s (%s) adjusted start: %p from %p\n", fd, fullname, lowercase_filename, (void*)addr, (void*)(mapping->start)); 
         box_free(lowercase_filename);
         mutex_unlock(&my_context->mutex_dyndump);
         return;
@@ -885,11 +904,13 @@ done:
 #define HEADER_SIGN "DynaCache"
 #define SET_VERSION(MAJ, MIN, REV) (((MAJ)<<24)|((MIN)<<16)|(REV))
 #ifdef ARM64
-#define ARCH_VERSION SET_VERSION(0, 0, 12)
+#define ARCH_VERSION SET_VERSION(0, 0, 13)
 #elif defined(RV64)
-#define ARCH_VERSION SET_VERSION(0, 0, 4)
-#elif defined(LA64)
 #define ARCH_VERSION SET_VERSION(0, 0, 5)
+#elif defined(LA64)
+#define ARCH_VERSION SET_VERSION(0, 0, 7)
+#elif defined(PPC64LE)
+#define ARCH_VERSION SET_VERSION(0, 0, 1)
 #else
 #error meh!
 #endif
@@ -1466,6 +1487,18 @@ int IsAddrFileMapped(uintptr_t addr, const char** filename, uintptr_t* start)
         return 1;
     }
     return 0;
+}
+
+int IsAddrFileMappedNoMemFD(uintptr_t addr)
+{
+    const char* filename = NULL;
+    if(!IsAddrFileMapped(addr, &filename, NULL))
+        return 0;
+    if(!filename)
+        return 0;
+    if(strstr(filename, "/memfd:")==filename)
+        return 0;
+    return 1;
 }
 
 size_t SizeFileMapped(uintptr_t addr)

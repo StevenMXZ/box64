@@ -46,11 +46,15 @@ typedef struct x64_stack_s x64_stack_t;
 
 extern int mkdir(const char *path, mode_t mode);
 extern int mknod(const char *path, mode_t mode, dev_t dev);
+extern int chmod(const char *path, mode_t mode);
 extern int fchmodat (int __fd, const char *__file, mode_t __mode, int __flag);
 
 //int32_t my_getrandom(x64emu_t* emu, void* buf, uint32_t buflen, uint32_t flags);
 int of_convert(int flag);
 int32_t my_open(x64emu_t* emu, void* pathname, int32_t flags, uint32_t mode);
+#ifdef PPC64LE
+unsigned long ioctl_convert(unsigned long x86_req);
+#endif
 ssize_t my_readlink(x64emu_t* emu, void* path, void* buf, size_t sz);
 int my_readlinkat(x64emu_t* emu, int fd, void* path, void* buf, size_t bufsize);
 int my_stat(x64emu_t *emu, void* filename, void* buf);
@@ -106,7 +110,10 @@ static const scwrap_t syscallwrap[] = {
     [12] = {__NR_brk, 1},
     //[13] = {__NR_rt_sigaction, 4},   // wrapped to use my_ version
     [14] = {__NR_rt_sigprocmask, 4},
+    [15] = {__NR_rt_sigreturn, 1},
+    #ifndef PPC64LE
     [16] = {__NR_ioctl, 3},
+    #endif
     [17] = {__NR_pread64, 4},
     [18] = {__NR_pwrite64, 4},
     [19] = {__NR_readv, 3},
@@ -127,7 +134,11 @@ static const scwrap_t syscallwrap[] = {
     #ifdef __NR_dup2
     [33] = {__NR_dup2, 2},
     #endif
+    #ifdef __NR_pause
+    [34] = {__NR_pause, 0},
+    #endif
     [35] = {__NR_nanosleep, 2},
+    [38] = {__NR_setitimer, 3},
     [39] = {__NR_getpid, 0},
     [41] = {__NR_socket, 3},
     [42] = {__NR_connect, 3},
@@ -169,14 +180,25 @@ static const scwrap_t syscallwrap[] = {
     #ifdef __NR_mkdir
     [83] = {__NR_mkdir, 2},
     #endif
+    #ifdef __NR_rmdir
+    [84] = {__NR_rmdir, 1},
+    #endif
     #ifdef __NR_unlink
     [87] = {__NR_unlink, 1},
     #endif
+    #ifdef __NR_symlink
+    [88] = {__NR_symlink, 2},
+    #endif
     //[89] = {__NR_readlink, 3},  // not always existing, better use the wrapped version anyway
+    #ifdef __NR_chmod
+    [90] = {__NR_chmod, 2},
+    #endif
+    [91] = {__NR_fchmod, 2},
     [96] = {__NR_gettimeofday, 2},
     #ifdef __NR_getrlimit
     [97] = {__NR_getrlimit, 2},
     #endif
+    [99] = {__NR_sysinfo, 1},
     [101] = {__NR_ptrace, 4},
     [102] = {__NR_getuid, 0},
     [104] = {__NR_getgid, 0},
@@ -257,6 +279,7 @@ static const scwrap_t syscallwrap[] = {
     [238] = {__NR_set_mempolicy, 3},
     [239] = {__NR_get_mempolicy, 5},
     [247] = {__NR_waitid, 5},
+    [251] = {__NR_ioprio_set, 3},
     #ifdef __NR_inotify_init
     [253] = {__NR_inotify_init, 0},   //0xFD
     #endif
@@ -328,6 +351,9 @@ static const scwrap_t syscallwrap[] = {
     #endif
     #ifdef __NR_fchmodat4
     [434] = {__NR_fchmodat4, 4},
+    #endif
+    #ifdef __NR_close_range
+    [436] = {__NR_close_range, 3},
     #endif
     #ifdef __NR_faccessat2
     [439] = {__NR_faccessat2, 4},
@@ -526,7 +552,7 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
         if(S_EAX==-1 && errno>0)
             S_RAX = -errno;
         if(log) snprintf(buffret, 127, "0x%x%s", R_EAX, buff2);
-        if(log && !BOX64ENV(rolling_log)) printf_log(LOG_NONE, "=> %s\n", buffret);
+        if(log && !BOX64ENV(rolling_log)) printf_log_prefix(0, LOG_NONE, "=> %s\n", buffret);
         return;
     }
     switch (s) {
@@ -562,6 +588,13 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
             if(S_RAX==-1)
                 S_RAX = -errno;
             break;
+        #ifdef PPC64LE
+        case 16: // sys_ioctl (PPC64LE needs ioctl number translation)
+            S_RAX = ioctl(S_EDI, ioctl_convert(R_RSI), R_RDX);
+            if(S_RAX==-1)
+                S_RAX = -errno;
+            break;
+        #endif
         case 6: // sys_lstat
             S_RAX = my_lstat(emu, (void*)R_RDI, (void*)R_RSI);
             if(S_RAX==-1)
@@ -626,7 +659,7 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
             S_RAX = pipe((void*)R_RDI);
             if(S_RAX==-1)
                 S_RAX = -errno;
-            else if(log) printf_log(LOG_INFO, "[%d, %d]", ((int*)R_RDI)[0], ((int*)R_RDI)[1]);
+            else if(log) printf_log_prefix(0, LOG_INFO, "[%d, %d]", ((int*)R_RDI)[0], ((int*)R_RDI)[1]);
             break;
         #endif
         #ifndef __NR_select
@@ -642,6 +675,13 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
         #ifndef __NR_dup2
         case 33: // sys_dup2
             S_RAX = dup2(S_EDI, S_ESI);
+            if(S_RAX==-1)
+                S_RAX = -errno;
+            break;
+        #endif
+        #ifndef __NR_pause
+        case 34: // sys_pause
+            S_RAX = pause();
             if(S_RAX==-1)
                 S_RAX = -errno;
             break;
@@ -749,9 +789,23 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
                 S_RAX = -errno;
         break;
         #endif
+        #ifndef __NR_rmdir
+        case 84: // sys_rmdir
+            S_RAX = rmdir((void*)R_RDI);
+            if(S_RAX==-1)
+                S_RAX = -errno;
+        break;
+        #endif
         #ifndef __NR_unlink
         case 87: //sys_unlink
             S_RAX = unlink((void*)R_RDI);
+            if(S_RAX==-1)
+                S_RAX = -errno;
+            break;
+        #endif
+        #ifndef __NR_symlink
+        case 88: //sys_symlink
+            S_RAX = symlink((void*)R_RDI, (void*)R_RSI);
             if(S_RAX==-1)
                 S_RAX = -errno;
             break;
@@ -761,6 +815,13 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
             if(S_RAX==-1)
                 S_RAX = -errno;
             break;
+        #ifndef __NR_chmod
+        case 90:
+            S_RAX = chmod((void*)R_RDI, R_ESI);
+            if(S_RAX==-1)
+                S_RAX = -errno;
+            break;
+        #endif
         #ifndef __NR_getrlimit
         case 97:
             S_RAX = getrlimit(S_EDI, (void*)R_RSI);
@@ -1033,6 +1094,14 @@ long EXPORT my_syscall(x64emu_t *emu)
         #endif
         case 25: // sys_mremap
             return (intptr_t)my_mremap(emu, (void*)R_RSI, R_RDX, R_RCX, R_R8d, (void*)R_R9);
+        #ifndef __NR_dup2
+        case 33:
+            return dup2(S_ESI, S_EDX);
+        #endif
+        #ifndef __NR_pause
+        case 34:
+            return pause();
+        #endif
         case 56: // sys_clone
             // x86_64 raw syscall is long clone(unsigned long flags, void *stack, int *parent_tid, int *child_tid, unsigned long tls);
             // so flags=R_RSI, stack=R_RDX, parent_tid=R_RCX, child_tid=R_R8, tls=R_R9
@@ -1082,10 +1151,6 @@ long EXPORT my_syscall(x64emu_t *emu)
                 return syscall(__NR_clone, R_RSI, R_RDX, R_RCX, R_R9, R_R8);    // invert R_R8/R_R9 on Aarch64 and most other
                 #endif
             break;
-        #ifndef __NR_dup2
-        case 33:
-            return  dup2(S_ESI, S_EDX);
-        #endif
         #ifndef __NR_fork
         case 57:
             return fork();
@@ -1120,12 +1185,24 @@ long EXPORT my_syscall(x64emu_t *emu)
         case 83: // sys_mkdir
             return mkdir((void*)R_RSI, R_EDX);
         #endif
+        #ifndef __NR_rmdir
+        case 84: // sys_rmdir
+            return rmdir((void*)R_RSI);
+        #endif
         #ifndef __NR_unlink
         case 87: //sys_unlink
             return unlink((void*)R_RSI);
         #endif
+        #ifndef __NR_symlink
+        case 88: //sys_symlink
+            return symlink((void*)R_RSI, (void*)R_RDX);
+        #endif
         case 89: // sys_readlink
             return my_readlink(emu,(void*)R_RSI, (void*)R_RDX, (size_t)R_RCX);
+        #ifndef __NR_chmod
+        case 90:
+            return chmod((void*)R_RSI, R_EDX);
+        #endif
         #ifndef __NR_getrlimit
         case 97:
             return getrlimit(S_ESI, (void*)R_RDX);
@@ -1200,7 +1277,7 @@ long EXPORT my_syscall(x64emu_t *emu)
         #endif
         #ifndef NOALIGN
         case 291:   // sys__epoll_create1
-            return epoll_create1(of_convert(S_EDI));
+            return epoll_create1(of_convert(S_ESI));
         #endif
         case 317:   // sys_seccomp
             return 0;  // ignoring call

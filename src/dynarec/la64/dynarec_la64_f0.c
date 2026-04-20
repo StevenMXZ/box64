@@ -58,6 +58,7 @@ uintptr_t dynarec64_F0(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, 0);
                 if (cpuext.lam_bh) {
                     AMADD_DB_B(x1, gd, wback);
+                    ANDI(x1, x1, 0xff);
                 } else {
                     LOCK_8_OP(ADD_D(x4, x1, gd), x1, wback, x3, x4, x5, x6);
                 }
@@ -994,7 +995,10 @@ uintptr_t dynarec64_F0(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                         MV(x3, wback);
                         BSTRINS_D(x3, xZR, 1, 0);
                         ADDI_D(x1, xZR, u8);
-                        SLL_D(x1, x1, x2);
+                        SLL_W(x4, x1, x2);
+                        ADDI_D(x5, xZR, 0xFF);
+                        SLL_W(x5, x5, x2);
+                        ORN(x1, x4, x5);
                         AMAND_DB_W(x4, x1, x3);
                         IFXORNAT (X_ALL | X_PEND) {
                             SRL_D(x1, x4, x2);
@@ -1129,6 +1133,7 @@ uintptr_t dynarec64_F0(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                         } else {
                             INST_NAME("LOCK ADC Ed, Ib");
                         }
+                        READFLAGS(X_CF);
                         SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION);
                         addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, (opcode == 0x81) ? 4 : 1);
                         if (cpuext.lbt) {
@@ -1189,6 +1194,7 @@ uintptr_t dynarec64_F0(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                         } else {
                             INST_NAME("LOCK SBB Ed, Ib");
                         }
+                        READFLAGS(X_CF);
                         SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION);
                         addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, (opcode == 0x81) ? 4 : 1);
                         if (cpuext.lbt) {
@@ -1500,11 +1506,11 @@ uintptr_t dynarec64_F0(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                                 BNEZ_MARK2(x3);
                             }
                             if (cpuext.lamcas) {
-                                LD_D(x5, wback, 0);
-                                SUB_D(x4, xZR, x5);
-                                MV(x6, x5);
-                                AMCAS_DB_D(x5, x4, wback);
-                                BNE(x6, x5, -4 * 3);
+                                LD_D(x1, wback, 0);
+                                SUB_D(x4, xZR, x1);
+                                MV(x6, x1);
+                                AMCAS_DB_D(x1, x4, wback);
+                                BNE(x6, x1, -4 * 3);
                             } else {
                                 LL_D(x1, wback, 0);
                                 SUB_D(x4, xZR, x1);
@@ -1519,11 +1525,11 @@ uintptr_t dynarec64_F0(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                             }
                             // aligned 4byte
                             if (cpuext.lamcas) {
-                                LD_WU(x5, wback, 0);
-                                SUB_W(x4, xZR, x5);
-                                MV(x6, x5);
-                                AMCAS_DB_W(x5, x4, wback);
-                                BNE(x6, x5, -4 * 3);
+                                LD_WU(x1, wback, 0);
+                                SUB_W(x4, xZR, x1);
+                                SEXT_W(x6, x1);
+                                AMCAS_DB_W(x1, x4, wback);
+                                BNE(x6, x1, -4 * 3);
                             } else {
                                 LL_W(x1, wback, 0);
                                 SUB_W(x4, xZR, x1);
@@ -1570,6 +1576,7 @@ uintptr_t dynarec64_F0(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                         addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, 0);
                         if (cpuext.lam_bh) {
                             AMADD_DB_B(x1, x7, wback);
+                            ANDI(x1, x1, 0xff);
                         } else {
                             LOCK_8_OP(ADD_D(x4, x1, x7), x1, wback, x3, x4, x5, x6);
                         }
@@ -1591,6 +1598,7 @@ uintptr_t dynarec64_F0(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                         addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, LOCK_LOCK, 0, 0);
                         if (cpuext.lam_bh) {
                             AMADD_DB_B(x1, x7, wback);
+                            ANDI(x1, x1, 0xff);
                         } else {
                             LOCK_8_OP(ADD_D(x4, x1, x7), x1, wback, x3, x4, x5, x6);
                         }

@@ -223,7 +223,7 @@ static int AddNeededLib_add(lib_t** maplib, int local, needed_libs_t* needed, in
         return 0;
     }
     // load a new one
-    needed->libs[n] = lib = NewLibrary(path, box64, verneeded);
+    needed->libs[n] = lib = NewLibrary(path, box64, verneeded, needed->rpath);
     if(!lib) {
         printf_dump(LOG_DEBUG, "Faillure to create lib => fail\n");
         return 1;   //Error
@@ -473,7 +473,7 @@ int GetNextSymbolStartEnd(lib_t *maplib, const char* name, uintptr_t* start, uin
     // search in needed libs from preloaded first, in order
     if(my_context->preload)
         for(int i=0; i<my_context->preload->size; ++i) {
-            if(next) {
+            if (next || BOX64ENV(force_ld_preload)) {
                 if(GetLibGlobalSymbolStartEnd(my_context->preload->libs[i], name, start, end, size, &weak, &version, &vername, 0, &veropt, elfsym)) {
                     return 1;
                 }

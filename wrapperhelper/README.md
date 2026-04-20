@@ -18,6 +18,8 @@ This project has been compiled and tested with `GCC 14.2.1 20240805` on an `x86_
 
 You may also use the `make clean` and `make distclean` commands to remove output files (`clean`) and directories (`distclean`).
 
+You may edit the `src/machine_x86.gen` file as you need. This file should be used to populate the `x86`-specific include paths.
+
 ## Usage
 
 To use the wrapper helper, run the following command in the folder containing this `README.md`:
@@ -46,6 +48,12 @@ Declarations of the form
 ```
 will mark the structure or union with tag `TAG`, or the structure or union aliased to `TAG` by a `typedef` if no such structure exist, as simple. This means that a pointer to such a structure will have a character output of `p`.
 This is not the same as making the pointer to the structure a complex type with conversion as `p` as e.g. pointers to pointers will behave differently.
+
+Declarations of the form
+```c
+#pragma wrappers prereserve_simple c IDENT
+```
+will mark the *future* type alias (`typedef`) `IDENT` as a simple type with a conversion as `c`. Note that the declaration must precede the type definition.
 
 System headers included (directly or indirectly) by the support file are overriden by the files in `include-fixed`.
 

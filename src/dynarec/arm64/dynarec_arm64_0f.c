@@ -35,7 +35,7 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
     uint8_t eb1, eb2, gb1, gb2;
     int32_t i32, i32_;
     int cacheupd = 0;
-    int v0, v1;
+    int v0, v1, v2;
     int q0, q1;
     int d0, d1;
     int s0;
@@ -422,7 +422,7 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             nextop = F8;
             GETIP(ip);
             u8 = (rex.r*8)+(nextop>>3&7);
-            if((((opcode==0x20) || (opcode==0x22)) && ((u8==1) || (u8==5) || (u8==6) || (u8==7) || (u8>8))) || (((opcode==0x21) || (opcode==0x23) && rex.r))) {
+            if((((opcode==0x20) || (opcode==0x22)) && ((u8==1) || (u8==5) || (u8==6) || (u8==7) || (u8>8))) || (((opcode==0x21) || (opcode==0x23)) && rex.r)) {
                 INST_NAME("Illegal 0F 20..23");
                 UDF(0);
             } else {
@@ -504,12 +504,11 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     VFCVTZSS(q0, q0);
                 } else {
                     MRS_fpsr(x5);
-                    BFCw(x5, FPSR_IOC, 1);   // reset IOC bit
-                    MSR_fpsr(x5);
                     ORRw_mask(x2, xZR, 1, 0);    //0x80000000
                     d0 = fpu_get_scratch(dyn, ninst);
                     for (int i=0; i<2; ++i) {
                         BFCw(x5, FPSR_IOC, 1);   // reset IOC bit
+                        MSR_fpsr(x5);
                         if (i) {
                             VMOVeS(d0, 0, v1, i);
                             FRINTZS(d0, d0);
@@ -542,12 +541,11 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     VFCVTZSS(q0, q0);
                 } else {
                     MRS_fpsr(x5);
-                    BFCw(x5, FPSR_IOC, 1);   // reset IOC bit
-                    MSR_fpsr(x5);
                     ORRw_mask(x2, xZR, 1, 0);    //0x80000000
                     d0 = fpu_get_scratch(dyn, ninst);
                     for (int i=0; i<2; ++i) {
                         BFCw(x5, FPSR_IOC, 1);   // reset IOC bit
+                        MSR_fpsr(x5);
                         if (i) {
                             VMOVeS(d0, 0, v1, i);
                             FRINTIS(d0, d0);
@@ -572,10 +570,7 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             nextop = F8;
             GETGX(v0, 0);
             GETEXSS(s0, 0, 0);
-            IFX(X_CF|X_PF|X_ZF) {
-                FCMPS(v0, s0);
-            }
-            FCOMI(x1, x2);
+            FCOMIS(x1, x2, v0, s0);
             break;
         case 0x30:
             INST_NAME("WRMSR");
@@ -841,6 +836,12 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                             v1 = fpu_get_scratch(dyn, ninst);
                         } else
                             v1 = q1;
+                        if(q0==d0) {
+                            // move away q0 as it would be overwritten else
+                            int tmp = fpu_get_scratch(dyn, ninst);
+                            VMOVQ(tmp, d0);
+                            d0 = tmp;
+                        }
                         VREV64Q_32(q0, q0);
                         if(q0==q1) {
                             VMOVQ(v1, q0);
@@ -1218,6 +1219,8 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             if(!BOX64ENV(dynarec_fastnan)) {
                 v0 = fpu_get_scratch(dyn, ninst);
                 v1 = fpu_get_scratch(dyn, ninst);
+                v2 = fpu_get_scratch(dyn, ninst);
+                VMOVQ(v2, q1); // save original src1 (Gx)
                 // check if any input value was NAN
                 VFMAXQS(v0, q0, q1);    // propagate NAN
                 VFCMEQQS(v0, v0, v0);    // 0 if NAN, 1 if not NAN
@@ -1228,6 +1231,10 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 VBICQ(v1, v0, v1);      // forget it in any input was a NAN already
                 VSHLQ_32(v1, v1, 31);   // only keep the sign bit
                 VORRQ(q1, q1, v1);      // NAN -> -NAN
+                VFCMEQQS(v0, v2, v2);   // 0 if src1 was NaN
+                MOVIQ_32_lsl(v1, 0x40, 2); // QNaN bit
+                VORRQ(v2, v2, v1);         // quiet any SNaN in saved src1
+                VBIFQ(q1, v2, v0);         // where src1 was NaN, use QNaN(src1)
             }
             break;
         case 0x59:
@@ -1238,6 +1245,8 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             if(!BOX64ENV(dynarec_fastnan)) {
                 v0 = fpu_get_scratch(dyn, ninst);
                 v1 = fpu_get_scratch(dyn, ninst);
+                v2 = fpu_get_scratch(dyn, ninst);
+                VMOVQ(v2, q1); // save original src1 (Gx)
                 // check if any input value was NAN
                 VFMAXQS(v0, q0, q1);    // propagate NAN
                 VFCMEQQS(v0, v0, v0);    // 0 if NAN, 1 if not NAN
@@ -1248,6 +1257,10 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 VBICQ(v1, v0, v1);      // forget it in any input was a NAN already
                 VSHLQ_32(v1, v1, 31);   // only keep the sign bit
                 VORRQ(q1, q1, v1);      // NAN -> -NAN
+                VFCMEQQS(v0, v2, v2);   // 0 if src1 was NaN
+                MOVIQ_32_lsl(v1, 0x40, 2); // QNaN bit
+                VORRQ(v2, v2, v1);         // quiet any SNaN in saved src1
+                VBIFQ(q1, v2, v0);         // where src1 was NaN, use QNaN(src1)
             }
             break;
         case 0x5A:
@@ -1272,6 +1285,8 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             if(!BOX64ENV(dynarec_fastnan)) {
                 v0 = fpu_get_scratch(dyn, ninst);
                 v1 = fpu_get_scratch(dyn, ninst);
+                v2 = fpu_get_scratch(dyn, ninst);
+                VMOVQ(v2, q1); // save original src1 (Gx)
                 // check if any input value was NAN
                 VFMAXQS(v0, q0, q1);    // propagate NAN
                 VFCMEQQS(v0, v0, v0);    // 0 if NAN, 1 if not NAN
@@ -1282,6 +1297,10 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 VBICQ(v1, v0, v1);      // forget it in any input was a NAN already
                 VSHLQ_32(v1, v1, 31);   // only keep the sign bit
                 VORRQ(q1, q1, v1);      // NAN -> -NAN
+                VFCMEQQS(v0, v2, v2);   // 0 if src1 was NaN
+                MOVIQ_32_lsl(v1, 0x40, 2); // QNaN bit
+                VORRQ(v2, v2, v1);         // quiet any SNaN in saved src1
+                VBIFQ(q1, v2, v0);         // where src1 was NaN, use QNaN(src1)
             }
             break;
         case 0x5D:
@@ -1303,6 +1322,8 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             if(!BOX64ENV(dynarec_fastnan)) {
                 v0 = fpu_get_scratch(dyn, ninst);
                 v1 = fpu_get_scratch(dyn, ninst);
+                v2 = fpu_get_scratch(dyn, ninst);
+                VMOVQ(v2, q1); // save original src1 (Gx)
                 // check if any input value was NAN
                 VFMAXQS(v0, q0, q1);    // propagate NAN
                 VFCMEQQS(v0, v0, v0);    // 0 if NAN, 1 if not NAN
@@ -1313,6 +1334,10 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 VBICQ(v1, v0, v1);      // forget it in any input was a NAN already
                 VSHLQ_32(v1, v1, 31);   // only keep the sign bit
                 VORRQ(q1, q1, v1);      // NAN -> -NAN
+                VFCMEQQS(v0, v2, v2);   // 0 if src1 was NaN
+                MOVIQ_32_lsl(v1, 0x40, 2); // QNaN bit
+                VORRQ(v2, v2, v1);         // quiet any SNaN in saved src1
+                VBIFQ(q1, v2, v0);         // where src1 was NaN, use QNaN(src1)
             }
             break;
         case 0x5F:
@@ -1676,6 +1701,11 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             INST_NAME("EMMS");
             // empty MMX, FPU now usable
             mmx_purgecache(dyn, ninst, 0, x1);
+            x87_purgecache(dyn, ninst, 1, x1, x2, x3);  // also purge x87 and hard reset it
+            STRw_U12(xZR, xEmu, offsetof(x64emu_t, top));
+            STRw_U12(xZR, xEmu, offsetof(x64emu_t, fpu_stack));
+            MOV64x(x1, TAGS_EMPTY);
+            STRx_U12(x1, xEmu, offsetof(x64emu_t, fpu_tags));
             /*emu->top = 0;
             emu->fpu_stack = 0;*/ //TODO: Check if something is needed here?
             break;
@@ -2141,9 +2171,9 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     CMPSxw_REG(xRAX, ed);
                 }
                 MOVxw_REG(x1, ed); // save value
-                Bcond(cNE, 4 + (rex.w ? 4 : 8));
+                Bcond(cNE, 4 + 8);
                 MOVxw_REG(ed, gd);
-                if (!rex.w) { B_NEXT_nocond; }
+                B_NEXT_nocond;
             } else {
                 addr = geted(dyn, addr, ninst, nextop, &wback, x2, &fixedaddress, &unscaled, 0xfff<<(2+rex.w), (1<<(2+rex.w))-1, rex, NULL, 0, 0);
                 LDxw(x1, wback, fixedaddress);
@@ -2397,10 +2427,18 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             nextop = F8;
             GETED(0);
             GETGD;
+            if (BOX64DRENV(dynarec_safeflags) && !BOX64ENV(cputype)) {
+                IFX(X_PF)
+                    MOV32w(x3, 0);      // PF uses 0 when the source is zero
+            }
             TSTxw_REG(ed, ed);
             B_MARK(cEQ);
-            RBITxw(x1, ed);   // reverse
-            CLZxw(gd, x1);    // x2 gets leading 0 == BSF
+            RBITxw(gd, ed);   // reverse
+            CLZxw(gd, gd);    // gd gets leading 0 == BSF
+            if (BOX64DRENV(dynarec_safeflags) && !BOX64ENV(cputype)) {
+                IFX(X_PF)
+                    MOVxw_REG(x3, gd);
+            }
             MARK;
             IFX(X_ZF) {
                 IFNATIVE(NF_EQ) {} else {
@@ -2413,7 +2451,7 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 IFX(X_AF) BFCw(xFlags, F_AF, 1);
                 IFX(X_SF) BFCw(xFlags, F_SF, 1);
                 IFX(X_OF) BFCw(xFlags, F_OF, 1);
-                IFX(X_PF) emit_pf(dyn, ninst, gd, x2);
+                IFX(X_PF) emit_pf(dyn, ninst, x3, x2);
             }
             break;
         case 0xBD:
@@ -2427,11 +2465,19 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             nextop = F8;
             GETED(0);
             GETGD;
+            if (BOX64DRENV(dynarec_safeflags) && !BOX64ENV(cputype)) {
+                IFX(X_PF)
+                    MOV32w(x3, 0);      // PF uses 0 when the source is zero
+            }
             TSTxw_REG(ed, ed);
             B_MARK(cEQ);
-            CLZxw(gd, ed);    // x2 gets leading 0
+            CLZxw(gd, ed);    // gd gets leading 0
             SUBxw_U12(gd, gd, rex.w?63:31);
             NEGxw_REG(gd, gd);   // complement
+            if (BOX64DRENV(dynarec_safeflags) && !BOX64ENV(cputype)) {
+                IFX(X_PF)
+                    MOVxw_REG(x3, gd);
+            }
             MARK;
             IFX(X_ZF) {
                 IFNATIVE(NF_EQ) {} else {
@@ -2444,7 +2490,7 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 IFX(X_AF) BFCw(xFlags, F_AF, 1);
                 IFX(X_SF) BFCw(xFlags, F_SF, 1);
                 IFX(X_OF) BFCw(xFlags, F_OF, 1);
-                IFX(X_PF) emit_pf(dyn, ninst, gd, x2);
+                IFX(X_PF) emit_pf(dyn, ninst, x3, x2);
             }
             break;
         case 0xBE:
@@ -2481,7 +2527,7 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             }
             break;
         case 0xC0:
-            INST_NAME("XADD Gb, Eb");
+            INST_NAME("XADD Eb, Gb");
             SETFLAGS(X_ALL, SF_SET_PENDING);
             nextop = F8;
             GETGB(x1);
@@ -2492,16 +2538,15 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             EBBACK; // eb gets x1 (sum)
             break;
         case 0xC1:
-            INST_NAME("XADD Gd, Ed");
+            INST_NAME("XADD Ed, Gd");
             SETFLAGS(X_ALL, SF_SET_PENDING);
             nextop = F8;
             GETGD;
             GETED(0);
-            MOVxw_REG(x3, ed);
-            MOVxw_REG(ed, gd);
-            MOVxw_REG(gd, x3);
+            if (ed != gd) MOVx_REG(x3, ed);
             emit_add32(dyn, ninst, rex, ed, gd, x4, x5);
             WBACK;
+            if (ed != gd) MOVxw_REG(gd, x3);
             break;
         case 0xC2:
             INST_NAME("CMPPS Gx, Ex, Ib");
@@ -2653,7 +2698,7 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             } else switch((nextop>>3)&7) {
             case 1:
                 if(MODREG) {
-                    INST_NAME("Invalid LOCK");
+                    INST_NAME("Invalid C7");
                     UDF(0);
                     *need_epilog = 1;
                     *ok = 0;
@@ -2668,6 +2713,8 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     addr = geted(dyn, addr, ninst, nextop, &wback, x1, &fixedaddress, NULL, 0, 0, rex, NULL, 0, 0);
                     if(rex.w && BOX64DRENV(dynarec_safeflags)>1) {
                         // unaligned memory cause a GPF
+                        // commit df before branch, CALL_S in GPF path has FORCE_DFNONE
+                        CHECK_DFNONE(0);
                         TSTx_mask(wback, 1, 0, 3);
                         B_MARK2(cEQ);   // alligned, continue...
                         STORE_XEMU_CALL(xRIP);
@@ -2705,25 +2752,6 @@ uintptr_t dynarec64_0F(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 BARRIER(BARRIER_FLOAT);
                 GETIP(ip);
                 UDF(0);
-                break;
-            case 6:
-                INST_NAME("RDRAND Ed");
-                SETFLAGS(X_ALL, SF_SET);
-                SET_DFNONE();
-                IFX(X_OF|X_SF|X_ZF|X_PF|X_AF) {
-                    MOV32w(x1, (1<<F_OF)|(1<<F_SF)|(1<<F_ZF)|(1<<F_PF)|(1<<F_AF));
-                    BICw(xFlags, xFlags, x1);
-                }
-                if(cpuext.rndr) {
-                    MRS_rndr(x1);
-                    IFX(X_CF) { CSETw(x3, cNE); }
-                } else {
-                    CALL(rex.w?const_random64:const_random32, x1);
-                    IFX(X_CF) { MOV32w(x3, 1); }
-                }
-                IFX(X_CF) { BFIw(xFlags, x3, F_CF, 1); }
-                addr = geted(dyn, addr, ninst, nextop, &wback, x2, &fixedaddress, &unscaled, 0xfff<<(2+rex.w), (1<<(2+rex.w))-1, rex, NULL, 0, 0);
-                STxw(x1, wback, fixedaddress);
                 break;
             default:
                 DEFAULT;

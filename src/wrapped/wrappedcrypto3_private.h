@@ -305,6 +305,7 @@ GO(BIO_get_callback_arg, pFp)
 GO(BIO_get_close, iFp)
 GO(BIO_get_ex_data, pFpi)
 //GO(BIO_get_ex_new_index, 
+GO(BIO_get_new_index, iFv)
 GO(BIO_gethostbyname, pFp)
 GO(BIO_get_host_ip, iFpp)
 GO(BIO_get_port, iFpp)
@@ -316,6 +317,15 @@ GO(BIO_indent, iFpii)
 GO(BIO_int_ctrl, lFpili)
 GO(BIO_method_name, pFp)
 GO(BIO_method_type, iFp)
+GOM(BIO_meth_get_callback_ctrl, pFp)    // might need GOM as they return a callback
+GOM(BIO_meth_get_create, pFp)   // might need GOM as they return a callback
+GOM(BIO_meth_get_ctrl, pFp) // might need GOM as they return a callback
+GOM(BIO_meth_get_destroy, pFp)  // might need GOM as they return a callback
+GOM(BIO_meth_get_gets, pFp) // might need GOM as they return a callback
+GOM(BIO_meth_get_puts, pFp) // might need GOM as they return a callback
+GOM(BIO_meth_get_read, pFp) // might need GOM as they return a callback
+GOM(BIO_meth_get_write, pFp)    // might need GOM as they return a callback
+GOM(BIO_meth_set_callback_ctrl, iFEpp)
 GOM(BIO_meth_set_gets, iFEpp)
 GO(BIO_new, pFp)
 GO(BIO_new_accept, pFp)
@@ -464,7 +474,7 @@ GO(BN_GF2m_poly2arr, iFppi)
 GO(BN_hex2bn, iFpp)
 //GO(BN_init, 
 GO(BN_is_bit_set, iFpi)
-//GOM(BN_is_prime, iFEpippp)  // third argument is a callback
+//GOM(BN_is_prime, iFEpippp)
 GO(BN_is_prime_ex, iFpipp)
 //GOM(BN_is_prime_fasttest, iFEpipppi)
 GO(BN_is_prime_fasttest_ex, iFpipip)
@@ -823,7 +833,7 @@ GO(CRYPTO_add_lock, iFpiipi)
 //GO(CRYPTO_cfb128_1_encrypt, 
 //GO(CRYPTO_cfb128_8_encrypt, 
 //GO(CRYPTO_cfb128_encrypt, 
-GO(CRYPTO_clear_free, vFvLpi)
+GO(CRYPTO_clear_free, vFpLpi)
 GO(CRYPTO_cleanup_all_ex_data, vFv)
 //GO(CRYPTO_ctr128_encrypt, 
 //GO(CRYPTO_ctr128_encrypt_ctr32, 
@@ -860,7 +870,7 @@ GO(CRYPTO_free_ex_data, vFipp)
 //GO(CRYPTO_get_dynlock_value, 
 GO(CRYPTO_get_ex_data, pFpi)
 //GO(CRYPTO_get_ex_data_implementation, 
-GO(CRYPTO_get_ex_new_index, iFilpppp)   // might need GOM, last 3 pointers are functions
+GOM(CRYPTO_get_ex_new_index, iFEilpppp)
 //GO(CRYPTO_get_id_callback, 
 //GO(CRYPTO_get_locked_mem_ex_functions, 
 //GO(CRYPTO_get_locked_mem_functions, 
@@ -969,7 +979,7 @@ GO(d2i_DSA_PUBKEY, pFppl)
 GO(d2i_DSA_PUBKEY_bio, pFpp)
 GO(d2i_DSA_PUBKEY_fp, pFpp)
 //GO(d2i_DSAPublicKey, 
-//GO(d2i_DSA_SIG, 
+GO(d2i_DSA_SIG, pFppl)
 GO(d2i_ECDSA_SIG, pFppl)
 //GO(d2i_ECParameters, 
 //GO(d2i_ECPKParameters, 
@@ -1163,13 +1173,15 @@ GO(DES_xcbc_encrypt, vFpplppppi)
 GO(DH_bits, iFp)
 GO(DH_check, iFpp)
 //GO(DH_check_pub_key, 
-//GO(DH_compute_key, 
+GO(DH_compute_key, iFppp)
 //GO(DH_compute_key_padded, 
 GO(DH_free, vFp)
-//GO(DH_generate_key, 
+GO(DH_generate_key, iFp)
 //GO(DH_generate_parameters, 
 //GO(DH_generate_parameters_ex, 
 GO(DH_get0_pqg, vFpppp)
+GO(DH_get0_key, vFppp)
+GO(DH_set0_key, iFppp)
 //GO(DH_get_1024_160, 
 //GO(DH_get_2048_224, 
 //GO(DH_get_2048_256, 
@@ -1183,10 +1195,11 @@ GO(DH_new, pFv)
 //GO(DHparams_dup, 
 //GO(DHparams_print, 
 //GO(DHparams_print_fp, 
+GO(DH_set0_pqg, iFpppp)
 //GO(DH_set_default_method, 
 //GO(DH_set_ex_data, 
 //GO(DH_set_method, 
-//GO(DH_size, 
+GO(DH_size, iFp)
 //GO(DH_up_ref, 
 GO(DIRECTORYSTRING_free, vFp)
 GO(DIRECTORYSTRING_new, pFv)
@@ -1227,9 +1240,10 @@ GO(DSA_set0_pqg, iFppp)
 //GO(DSA_set_default_method, 
 //GO(DSA_set_ex_data, 
 //GO(DSA_set_method, 
-GO(DSA_SIG_free, vFp) 
+GO(DSA_SIG_free, vFp)
 GO(DSA_sign, iFipippp)
 GO(DSA_SIG_new, pFv)
+GO(DSA_SIG_get0, vFppp)
 //GO(DSA_sign_setup, 
 GO(DSA_size, iFp)
 GO(DSA_up_ref, iFp)
@@ -1265,7 +1279,7 @@ GO(DSA_verify, iFipipip)
 GO(EC_curve_nid2nist, pFi)
 GO(EC_curve_nist2nid, iFp)
 //GO(ecdh_check, 
-//GO(ECDH_compute_key, 
+GOM(ECDH_compute_key, iFEpLppp)
 //GO(ECDH_get_default_method, 
 //GO(ECDH_get_ex_data, 
 //GO(ECDH_get_ex_new_index, 
@@ -1397,7 +1411,7 @@ GO(EC_GFp_simple_method, pFv)
 GO(EC_GROUP_check, iFpp)
 GO(EC_GROUP_check_discriminant, iFpp)
 GO(EC_GROUP_clear_free, vFp)
-//GO(EC_GROUP_cmp, 
+GO(EC_GROUP_cmp, iFppp)
 //GO(EC_GROUP_copy, 
 //GO(EC_GROUP_dup, 
 GO(EC_GROUP_free, vFp)
@@ -1475,7 +1489,7 @@ GO(EC_METHOD_get_field_type, iFp)
 //GO(EC_POINT_add, 
 //GO(EC_POINT_bn2point, 
 GO(EC_POINT_clear_free, vFp)
-//GO(EC_POINT_cmp, 
+GO(EC_POINT_cmp, iFpppp)
 GO(EC_POINT_copy, iFpp)
 //GO(EC_POINT_dbl, 
 GO(EC_POINT_dup, pFpp)
@@ -1612,7 +1626,7 @@ GO(ENGINE_register_RSA, iFp)
 //GO(ENGINE_register_STORE, 
 GO(ENGINE_remove, iFp)
 //GO(engine_set_all_null, 
-//GOM(ENGINE_set_ciphers, iFEpp)   //typedef int (*ENGINE_CIPHERS_PTR)(ENGINE *e, const EVP_CIPHER **impl, const int **nids, int nid)
+//GOM(ENGINE_set_ciphers, iFEpp)
 //GOM(ENGINE_set_cmd_defns, iFEpp)
 //GO(ENGINE_set_ctrl_function, 
 GO(ENGINE_set_default, iFpu)
@@ -1943,6 +1957,7 @@ GO(EVP_idea_cfb64, pFv)
 //GO(EVP_idea_ofb, 
 GO(EVP_KDF_CTX_free, vFp)
 GO(EVP_KDF_CTX_new, pFp)
+GO(EVP_KDF_CTX_set_params, iFpp)
 GO(EVP_KDF_derive, iFppLp)
 GO(EVP_KDF_fetch, pFppp)
 GO(EVP_KDF_free, vFp)
@@ -2741,7 +2756,7 @@ GO(OPENSSL_issetugid, iFv)
 //GO(OPENSSL_load_builtin_modules, 
 //GO(OPENSSL_memcmp, 
 GO(OPENSSL_no_config, vFv)
-// GO(OPENSSL_rdtsc,
+//GO(OPENSSL_rdtsc, 
 GOM(OPENSSL_sk_deep_copy, pFEppp)
 GO(OPENSSL_sk_find, iFpp)
 GO(OPENSSL_sk_free, vFp)
@@ -2813,6 +2828,7 @@ GOM(OSSL_PARAM_construct_int, vFEppp)
 GOM(OSSL_PARAM_construct_octet_string, vFEpppL)
 GOM(OSSL_PARAM_construct_uint, vFEppp)
 GOM(OSSL_PARAM_construct_utf8_string, vFEpppL)
+GO(OSSL_PARAM_construct_uint64, vFpp)
 GO(OSSL_PARAM_free, vFp)
 GO(OSSL_PARAM_get_BN, iFpp)
 GO(OSSL_PARAM_get_octet_string_ptr, iFppp)
@@ -3586,7 +3602,7 @@ GO(X509_check_ca, iFp)
 //GO(X509_check_email, 
 GO(X509_check_host, iFppLup)
 //GO(X509_check_ip, 
-//GO(X509_check_ip_asc, 
+GO(X509_check_ip_asc, iFppu)
 GO(X509_check_issued, iFpp)
 //GO(X509_check_private_key, 
 GO(X509_check_purpose, iFpii)
@@ -3683,6 +3699,7 @@ GO(X509_get0_pubkey, pFp)
 GO(X509_get0_serialNumber, pFp)
 GO(X509_get_serialNumber, pFp)
 GO(X509_get_signature_nid, iFp)
+GO(X509_get_signature_info, iFppppp)
 GO(X509_get_subject_name, pFp)
 GO(X509_get_version, lFp)
 GO(X509_get_X509_PUBKEY, pFp)
@@ -3710,10 +3727,10 @@ GO(X509_LOOKUP_ctrl, iFpiplp)
 GO(X509_LOOKUP_file, pFv)
 //GO(X509_LOOKUP_free, 
 GO(X509_LOOKUP_hash_dir, pFv)
-// GO(X509_LOOKUP_init,
-// GO(X509_LOOKUP_new,
-// GO(X509_LOOKUP_shutdown,
-// GO(X509_NAME_add_entry,
+//GO(X509_LOOKUP_init, 
+//GO(X509_LOOKUP_new, 
+//GO(X509_LOOKUP_shutdown, 
+//GO(X509_NAME_add_entry, 
 GO(X509_NAME_add_entry_by_NID, iFpiipiii)
 //GO(X509_NAME_add_entry_by_OBJ, 
 GO(X509_NAME_add_entry_by_txt, iFppipiii)
@@ -3817,7 +3834,7 @@ GO(X509_REQ_free, vFp)
 //GO(X509_REQ_get_attr_by_OBJ, 
 //GO(X509_REQ_get_attr_count, 
 //GO(X509_REQ_get_extension_nids, 
-//GO(X509_REQ_get_extensions,
+//GO(X509_REQ_get_extensions, 
 GO(X509_REQ_get_pubkey, pFp)
 GO(X509_REQ_get_subject_name, pFp)
 GO(X509_REQ_get_X509_PUBKEY, pFp)
@@ -3920,7 +3937,7 @@ GO(X509_STORE_get_ex_data, pFpi)
 GO(X509_STORE_load_file, iFpp)
 GO(X509_STORE_load_path, iFpp)
 GO(X509_STORE_load_store, iFpp)
-//GO(X509_STORE_load_locations, iFppp)
+GO(X509_STORE_load_locations, iFppp)
 GO(X509_STORE_lock, iFp)
 GO(X509_STORE_unlock, iFp)
 GO(X509_STORE_new, pFv)

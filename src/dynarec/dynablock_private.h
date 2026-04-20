@@ -26,6 +26,7 @@ typedef struct dynablock_s {
     void*           x64_addr;
     uintptr_t       x64_size;
     size_t          native_size;
+    uintptr_t       x64_readaddr;   // in case an alternate address is in effect, it can be different than x64_addr
     uint32_t        prefixsize; // size in byte of the prefix of the block
     int             size;
     uint32_t        hash;
@@ -34,6 +35,8 @@ typedef struct dynablock_s {
     uint8_t         dirty;      // if need to be tested as soon as it's created
     uint8_t         always_test:2;
     uint8_t         is32bits:1;
+    uint8_t         autocrc:1;
+    uint8_t         to_delete:1;
     int             callret_size;   // size of the array
     int             isize;
     int             arch_size;  // size of of arch dependant infos

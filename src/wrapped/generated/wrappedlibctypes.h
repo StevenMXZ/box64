@@ -55,6 +55,7 @@ typedef int32_t (*iFiiu_t)(int32_t, int32_t, uint32_t);
 typedef int32_t (*iFiip_t)(int32_t, int32_t, void*);
 typedef int32_t (*iFiiN_t)(int32_t, int32_t, ...);
 typedef int32_t (*iFiuu_t)(int32_t, uint32_t, uint32_t);
+typedef int32_t (*iFiLp_t)(int32_t, uintptr_t, void*);
 typedef int32_t (*iFipu_t)(int32_t, void*, uint32_t);
 typedef int32_t (*iFipp_t)(int32_t, void*, void*);
 typedef int32_t (*iFipV_t)(int32_t, void*, ...);
@@ -87,6 +88,7 @@ typedef int32_t (*iFiipA_t)(int32_t, int32_t, void*, va_list);
 typedef int32_t (*iFipii_t)(int32_t, void*, int32_t, int32_t);
 typedef int32_t (*iFipup_t)(int32_t, void*, uint32_t, void*);
 typedef int32_t (*iFippi_t)(int32_t, void*, void*, int32_t);
+typedef int32_t (*iFippL_t)(int32_t, void*, void*, uintptr_t);
 typedef int32_t (*iFpipp_t)(void*, int32_t, void*, void*);
 typedef int32_t (*iFpipV_t)(void*, int32_t, void*, ...);
 typedef int32_t (*iFpipA_t)(void*, int32_t, void*, va_list);
@@ -195,6 +197,7 @@ typedef int32_t (*iFppipppp_t)(void*, void*, int32_t, void*, void*, void*, void*
 	GO(stat, iFpp_t) \
 	GO(stat64, iFpp_t) \
 	GO(swapcontext, iFpp_t) \
+	GO(tss_create, iFpp_t) \
 	GO(__isoc99_scanf, iFpV_t) \
 	GO(execl, iFpV_t) \
 	GO(execle, iFpV_t) \
@@ -240,6 +243,7 @@ typedef int32_t (*iFppipppp_t)(void*, void*, int32_t, void*, void*, void*, void*
 	GO(fcntl, iFiiN_t) \
 	GO(fcntl64, iFiiN_t) \
 	GO(fsmount, iFiuu_t) \
+	GO(ioctl, iFiLp_t) \
 	GO(fspick, iFipu_t) \
 	GO(__lxstat, iFipp_t) \
 	GO(__lxstat64, iFipp_t) \
@@ -318,6 +322,7 @@ typedef int32_t (*iFppipppp_t)(void*, void*, int32_t, void*, void*, void*, void*
 	GO(__xmknod, iFipup_t) \
 	GO(fstatat, iFippi_t) \
 	GO(fstatat64, iFippi_t) \
+	GO(__inet_pton_chk, iFippL_t) \
 	GO(__vasprintf_chk, iFpipp_t) \
 	GO(glob, iFpipp_t) \
 	GO(glob64, iFpipp_t) \
@@ -355,6 +360,7 @@ typedef int32_t (*iFppipppp_t)(void*, void*, int32_t, void*, void*, void*, void*
 	GO(getopt_long, iFipppp_t) \
 	GO(getopt_long_only, iFipppp_t) \
 	GO(scandirat, iFipppp_t) \
+	GO(scandirat64, iFipppp_t) \
 	GO(_obstack_begin, iFpiipp_t) \
 	GO(__sprintf_chk, iFpilpV_t) \
 	GO(__vswprintf_chk, iFpuppp_t) \

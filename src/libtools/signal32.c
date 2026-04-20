@@ -48,6 +48,10 @@
 #include "dynarec/rv64/rv64_mapping.h"
 #define CONTEXT_REG(P, X)   P->uc_mcontext.__gregs[X]
 #define CONTEXT_PC(P)       P->uc_mcontext.__gregs[REG_PC]
+#elif defined(PPC64LE)
+#include "dynarec/ppc64le/ppc64le_mapping.h"
+#define CONTEXT_REG(P, X)   P->uc_mcontext.gp_regs[X]
+#define CONTEXT_PC(P)       P->uc_mcontext.gp_regs[PT_NIP]
 #else
 #error Unsupported Architecture
 #endif //arch
@@ -397,7 +401,7 @@ uint32_t RunFunctionHandler32(int* exit, int dynarec, i386_ucontext_t* sigcontex
     R_CS = 0x23;
 
     if(dynarec)
-        DynaCall(emu, fnc);
+        DynaCall(emu, fnc, 0);
     else
         EmuCall(emu, fnc);
 
@@ -481,7 +485,7 @@ int unlockMutex();
 int write_opcode(uintptr_t rip, uintptr_t native_ip, int is32bits);
 #define is_memprot_locked (1<<1)
 #define is_dyndump_locked (1<<8)
-void my_sigactionhandler_oldcode_32(x64emu_t* emu, int32_t sig, int simple, siginfo_t* info, void * ucntx, int* old_code, void* cur_db)
+int my_sigactionhandler_oldcode_32(x64emu_t* emu, int32_t sig, int simple, siginfo_t* info, void * ucntx, int* old_code, void* cur_db)
 {
     int Locks = unlockMutex();
     int log_minimum = (BOX64ENV(showsegv))?LOG_NONE:((sig==X64_SIGSEGV && my_context->is_sigaction[sig])?LOG_DEBUG:LOG_INFO);
@@ -617,6 +621,13 @@ void my_sigactionhandler_oldcode_32(x64emu_t* emu, int32_t sig, int simple, sigi
                 sigcontext->uc_mcontext.gregs[I386_TRAPNO] = 14;
                 if(!mmapped) info2->si_code = 1;
                 info2->si_errno = 0;
+            } else if (info->si_errno==0xb09d) {
+                // bound exception
+                sigcontext->uc_mcontext.gregs[I386_ERR] = 0;
+                sigcontext->uc_mcontext.gregs[I386_TRAPNO] = 5;
+                info2->si_errno = 0;
+                info2->si_code = 128;
+                info2->_sifields._sigfault.__si_addr = 0;
             }else {
                 sigcontext->uc_mcontext.gregs[I386_ERR] = 0x14|((sysmapped && !(real_prot&PROT_READ))?0:1);
                 sigcontext->uc_mcontext.gregs[I386_TRAPNO] = 14;
@@ -754,7 +765,7 @@ void my_sigactionhandler_oldcode_32(x64emu_t* emu, int32_t sig, int simple, sigi
             if(Locks & is_dyndump_locked)
                 CancelBlock64(1);
             #endif
-            #ifdef RV64
+            #if defined(RV64) || defined(PPC64LE)
             emu->xSPSave = emu->old_savedsp;
             #endif
             #ifdef DYNAREC
@@ -801,6 +812,7 @@ void my_sigactionhandler_oldcode_32(x64emu_t* emu, int32_t sig, int simple, sigi
     if(restorer)
         RunFunctionHandler32(&exits, 0, NULL, restorer, 0);
     relockMutex(Locks);
+    return 0;
 }
 
 void my32_sigactionhandler(int32_t sig, siginfo_t* info, void * ucntx)
@@ -813,6 +825,8 @@ void my32_sigactionhandler(int32_t sig, siginfo_t* info, void * ucntx)
     void * pc = (void*)p->uc_mcontext.__pc;
     #elif defined(RV64)
     void * pc = (void*)p->uc_mcontext.__gregs[0];
+    #elif defined(PPC64LE)
+    void * pc = (void*)p->uc_mcontext.gp_regs[PT_NIP];
     #else
     #error Unsupported architecture
     #endif

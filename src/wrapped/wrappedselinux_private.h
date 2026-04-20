@@ -31,14 +31,14 @@
 GO(context_free, vFp)
 GO(context_new, pFp)
 //GO(context_range_get, 
-//GO(context_range_set, 
+GO(context_range_set, iFpp)
 //GO(context_role_get, 
-//GO(context_role_set, 
+GO(context_role_set, iFpp)
 GO(context_str, pFp)
 GO(context_type_get, iFpp)
 GO(context_type_set, iFpp)
 //GO(context_user_get, 
-//GO(context_user_set, 
+GO(context_user_set, iFpp)
 //DATAB(dir_xattr_list, 
 GO(fgetfilecon, iFip)
 GO(fgetfilecon_raw, iFip)
@@ -105,7 +105,7 @@ GO(mode_to_security_class, iFup)
 //GO(security_av_string, 
 //GO(security_canonicalize_context, 
 //GO(security_canonicalize_context_raw, 
-//GO(security_check_context, 
+GO(security_check_context, iFp)
 //GO(security_check_context_raw, 
 //GO(security_class_to_string, 
 //GO(security_commit_booleans, 
@@ -146,7 +146,7 @@ GO(selabel_close, vFp)
 //GO(selabel_digest, 
 //GO(selabel_get_digests_all_partial_matches, 
 //GO(selabel_hash_all_partial_matches, 
-//GO(selabel_lookup, 
+GO(selabel_lookup, iFpppi)
 //GO(selabel_lookup_best_match, 
 //GO(selabel_lookup_best_match_raw, 
 GO(selabel_lookup_raw, iFppp)

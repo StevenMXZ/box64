@@ -31,6 +31,27 @@
 #ifndef PROT_READ
 #define PROT_READ 0x1
 #endif
+
+// Fail-close guard for page-boundary decode hazards:
+// if we cannot read a full x86 max instruction window, stop block build early.
+static int dynarec_can_read_window(uintptr_t addr, uintptr_t size)
+{
+    if(!size)
+        return 1;
+    uintptr_t end = addr + size - 1;
+    if(end < addr)
+        return 0;
+
+    uintptr_t cur = addr;
+    while(1) {
+        if(!(getProtection(cur) & PROT_READ))
+            return 0;
+        uintptr_t page_end = (cur & ~(box64_pagesize - 1)) + box64_pagesize - 1;
+        if(end <= page_end)
+            return 1;
+        cur = page_end + 1;
+    }
+}
 #endif
 
 uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int is32bits, int inst_max)
@@ -44,7 +65,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
     int rep = 0;    // 0 none, 1=F2 prefix, 2=F3 prefix
     int need_epilog = 1;
     // Clean up (because there are multiple passes)
-    #if defined(ARM64) || defined(LA64)
+    #if defined(ARM64) || defined(LA64) || defined(PPC64LE)
     dyn->f = status_unk;
     #else
     dyn->f.pending = 0;
@@ -55,6 +76,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
     dyn->forward_size = 0;
     dyn->forward_ninst = 0;
     dyn->ymm_zero = 0;
+    dyn->is_file_mapped = IsAddrElfOrFileMapped(addr);
     int dynarec_dirty = BOX64ENV(dynarec_dirty);
     #if STEP == 0
     memset(&dyn->insts[ninst], 0, sizeof(instruction_native_t));
@@ -66,7 +88,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
     ARCH_INIT();
     int reset_n = -1; // -1 no reset; -2 reset to 0; else reset to the state of reset_n
     dyn->last_ip = (alternate || (dyn->insts && dyn->insts[0].pred_sz))?0:ip;  // RIP is always set at start of block unless there is a predecessor!
-    int stopblock = 2 + !IsAddrElfOrFileMapped(addr);                          // if block is in elf memory or file mapped memory, it can be extended with BOX64DRENV(dynarec_bigblock)==2, else it needs 3
+    int stopblock = 2 + !dyn->is_file_mapped;                          // if block is in elf memory or file mapped memory, it can be extended with BOX64DRENV(dynarec_bigblock)==2, else it needs 3
     // ok, go now
     INIT;
     #if STEP == 0
@@ -74,16 +96,20 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
     #endif
     while(ok) {
         #if STEP == 0
+        int stop_for_guard = 0;
         if(cur_page != ((addr)&~(box64_pagesize-1))) {
             cur_page = (addr)&~(box64_pagesize-1);
             uint32_t prot = getProtection(addr);
-            if(!(prot&PROT_READ) || checkInHotPage(addr) || (addr>dyn->end)) {
-                dynarec_log(LOG_INFO, "Stopping dynablock because of protection, hotpage or mmap crossing at %p -> %p inst=%d\n", (void*)dyn->start, (void*)addr, ninst);
-                need_epilog = 1;
-                break;
+            if(!(prot&PROT_READ) || !(prot&PROT_EXEC) || checkInHotPage(addr) || (addr>dyn->end)) {
+                stop_for_guard = 1;
             }
             if(prot&PROT_NEVERCLEAN)
                 dyn->always_test = 1;
+        }
+        if(stop_for_guard) {
+            dynarec_log(LOG_INFO, "Stopping dynablock because of protection/hotpage/mmap/decode-window at %p -> %p inst=%d\n", (void*)dyn->start, (void*)addr, ninst);
+            need_epilog = 1;
+            break;
         }
         // This test is here to prevent things like TABLE64 to be out of range
         // native_size is not exact at this point, but it should be larger, not smaller, and not by a huge margin anyway
@@ -101,9 +127,16 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
         if(!ninst) {
             if(dyn->have_purge)
                 doEnterBlock(dyn, 0, x1, x2, x3);
+            if(dyn->always_test)
+                checkCRC(dyn, 0);
             if(dyn->insts[0].preload_xmmymm)
                 doPreload(dyn, 0);
             ENDPREFIX;
+        }
+        #elif defined(LA64)
+        if(!ninst) {
+            if(dyn->always_test)
+                checkCRC(dyn, 0);
         }
         #endif
         fpu_propagate_stack(dyn, ninst);
@@ -111,7 +144,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
             dyn->last_ip = 0;
             if(reset_n==-2) {
                 MESSAGE(LOG_DEBUG, "Reset Caches to zero\n");
-                #if defined(ARM64) || defined(LA64)
+                #if defined(ARM64) || defined(LA64) || defined(PPC64LE)
                 dyn->f = status_unk;
                 #else
                 dyn->f.dfnone = 0;
@@ -128,7 +161,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
                 }
                 if(dyn->insts[ninst].x64.barrier&BARRIER_FLAGS) {
                     MESSAGE(LOG_DEBUG, "Apply Barrier Flags\n");
-                    #if defined(ARM64) || defined(LA64)
+                    #if defined(ARM64) || defined(LA64) || defined(PPC64LE)
                     dyn->f = status_unk;
                     #else
                     dyn->f.dfnone = 0;
@@ -163,9 +196,6 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
         if (is_opcode_volatile && !dyn->insts[ninst].lock)
             DMB_ISHST();
         #endif
-        if((dyn->insts[ninst].x64.need_before&~X_PEND) && !ninst) {
-            READFLAGS(dyn->insts[ninst].x64.need_before&~X_PEND);
-        }
         if (BOX64DRENV(dynarec_dump) && (!BOX64ENV(dynarec_dump_range_end) || (ip >= BOX64ENV(dynarec_dump_range_start) && ip < BOX64ENV(dynarec_dump_range_end)))) {
             dyn->need_dump = BOX64DRENV(dynarec_dump);
         }
@@ -255,7 +285,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
         #if STEP > 0
         if(dyn->insts[ninst].x64.has_next && dyn->insts[next].x64.barrier) {
             if(dyn->insts[next].x64.barrier&BARRIER_FLOAT) {
-                #if defined (RV64) || defined(LA64)
+                #if defined (RV64) || defined(LA64) || defined(PPC64LE)
                 uint8_t tmp1, tmp2, tmp3;
                 if(dyn->insts[next].nat_flags_fusion) get_free_scratch(dyn, next, &tmp1, &tmp2, &tmp3, x1, x2, x3, x4, x5);
                 else { tmp1=x1; tmp2=x2; tmp3=x3; }
@@ -265,7 +295,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
                 #endif
             }
             if(dyn->insts[next].x64.barrier&BARRIER_FLAGS) {
-                #if defined(ARM64) || defined(LA64)
+                #if defined(ARM64) || defined(LA64) || defined(PPC64LE)
                 dyn->f = status_unk;
                 #else
                 dyn->f.pending = 0;
@@ -291,7 +321,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
             // we use the 1st predecessor here
             if((ninst+1)<dyn->size && !dyn->insts[ninst+1].x64.alive) {
                 // reset fpu value...
-                #if defined(ARM64) || defined(LA64)
+                #if defined(ARM64) || defined(LA64) || defined(PPC64LE)
                 dyn->f = status_unk;
                 #else
                 dyn->f.dfnone = 0;
@@ -445,7 +475,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
             #endif
             ++ninst;
             NOTEST(x3);
-            #if defined (RV64) || defined(LA64)
+            #if defined (RV64) || defined(LA64) || defined(PPC64LE)
             fpu_purgecache(dyn, ninst, 0, x1, x2, x3);
             #else
             fpu_purgecache(dyn, ninst, 0, x1, x2, x3, 0);
@@ -456,7 +486,7 @@ uintptr_t native_pass(dynarec_native_t* dyn, uintptr_t addr, int alternate, int 
     }
     if(need_epilog) {
         NOTEST(x3);
-        #if defined (RV64) || defined(LA64)
+        #if defined (RV64) || defined(LA64) || defined(PPC64LE)
         fpu_purgecache(dyn, ninst, 0, x1, x2, x3);
         #else
         fpu_purgecache(dyn, ninst, 0, x1, x2, x3, 0);

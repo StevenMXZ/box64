@@ -563,7 +563,7 @@ int convert_bitmask(uint64_t bitmask);
 #define BICw_LSL(Rd, Rn, Rm, lsl)       EMIT(LOGIC_REG_gen(0, 0b00, 0b00, 1, Rm, lsl, Rn, Rd))
 #define BICSx(Rd, Rn, Rm)              FEMIT(LOGIC_REG_gen(1, 0b11, 0b00, 1, Rm, 0, Rn, Rd))
 #define BICSw(Rd, Rn, Rm)              FEMIT(LOGIC_REG_gen(0, 0b11, 0b00, 1, Rm, 0, Rn, Rd))
-#define BICxw(Rd, Rn, Rm)              FEMIT(LOGIC_REG_gen(rex.w, 0b00, 0b00, 1, Rm, 0, Rn, Rd))
+#define BICxw(Rd, Rn, Rm)               EMIT(LOGIC_REG_gen(rex.w, 0b00, 0b00, 1, Rm, 0, Rn, Rd))
 #define BICSxw(Rd, Rn, Rm)             FEMIT(LOGIC_REG_gen(rex.w, 0b11, 0b00, 1, Rm, 0, Rn, Rd))
 #define BICx_REG    BICx
 #define BICw_REG    BICw
@@ -1220,6 +1220,11 @@ int convert_bitmask(uint64_t bitmask);
 #define FCMPD(Dn, Dm)              FEMIT(FCMP_scalar(0b01, Dn, Dm, 0b00))
 #define FCMPS_0(Sn)                FEMIT(FCMP_scalar(0b00, Sn, 0, 0b01))
 #define FCMPD_0(Dn)                FEMIT(FCMP_scalar(0b01, Dn, 0, 0b01))
+
+// CCMP . CMP if cond is pass, else use nzcv as new flags
+#define FCCMP_scalar(type, Rm, cond, Rn, op, nzcv)  (0b00011110<<24 | (type)<<22 | 1<<21 | (Rm)<<16 | ((cond)<<12 | 0b01<<10 | (Rn)<<5 | (op)<<4 | (nzcv)))
+#define FCCMPS(Sn, Sm, nzcv, cond) FEMIT(FCCMP_scalar(0b00, Sm, cond, Sn, 0, nzcv))
+#define FCCMPD(Dn, Dm, nzcv, cond) FEMIT(FCCMP_scalar(0b01, Dm, cond, Dn, 0, nzcv))
 
 // CVT
 #define FCVT_scalar(sf, type, rmode, opcode, Rn, Rd)    ((sf)<<31 | 0b11110<<24 | (type)<<22 | 1<<21 | (rmode)<<19 | (opcode)<<16 | (Rn)<<5 | (Rd))

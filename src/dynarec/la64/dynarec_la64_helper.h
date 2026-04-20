@@ -416,9 +416,9 @@
         BSTRINS_D(wback, ed, wb2 + 7, wb2); \
     }
 
-#define YMM_UNMARK_UPPER_ZERO(a)             \
-    do {                                     \
-        dyn->lsx.avxcache[a].zero_upper = 0; \
+#define YMM_UNMARK_UPPER_ZERO(a)        \
+    do {                                \
+        dyn->lsx.avxcache[a].dirty = 0; \
     } while (0)
 
 // AVX helpers
@@ -1028,6 +1028,15 @@
 #ifndef SET_HASCALLRET
 #define SET_HASCALLRET()
 #endif
+#ifndef CALLRET_RET
+#define CALLRET_RET(A)   do {if(BOX64DRENV(dynarec_callret)>1) {NOP();}} while(0)
+#endif
+#ifndef CALLRET_GETRET
+#define CALLRET_GETRET()    (dyn->callrets?(dyn->callrets[dyn->callret_size].offs-dyn->native_size):0)
+#endif
+#ifndef CALLRET_LOOP
+#define CALLRET_LOOP()  NOP()
+#endif
 #define UFLAG_OP1(A) \
     if (dyn->insts[ninst].x64.gen_flags) { SDxw(A, xEmu, offsetof(x64emu_t, op1)); }
 #define UFLAG_OP2(A) \
@@ -1066,6 +1075,11 @@
 
 #define ARCH_RESET()
 
+#undef PREFLAGSNEEDED
+#define PREFLAGSNEEDED()                                                                                        \
+    if(dyn->always_test && ninst && (dyn->insts[ninst].sep || (ninst && dyn->insts[ninst-1].x64.has_callret)))  \
+        checkCRC(dyn, ninst);
+
 #if STEP < 2
 #define GETIP(A, scratch)
 #define GETIP_(A, scratch)
@@ -1083,10 +1097,10 @@
         } else if (_delta_ip == 0) {                              \
         } else if (_delta_ip >= -2048 && _delta_ip < 2048) {      \
             ADDI_D(xRIP, xRIP, _delta_ip);                        \
-        } else if (_delta_ip < 0 && _delta_ip >= -0xffffffffL) {   \
+        } else if (_delta_ip < 0 && _delta_ip >= -0xffffffffL) {  \
             MOV32w(scratch, -_delta_ip);                          \
             SUB_D(xRIP, xRIP, scratch);                           \
-        } else if (_delta_ip > 0 && _delta_ip <= 0xffffffffL) {    \
+        } else if (_delta_ip > 0 && _delta_ip <= 0xffffffffL) {   \
             MOV32w(scratch, _delta_ip);                           \
             ADD_D(xRIP, xRIP, scratch);                           \
         } else {                                                  \
@@ -1308,7 +1322,7 @@
 #define avx_reflect_reg          STEPNAME(avx_reflect_reg)
 #define avx_purgecache           STEPNAME(avx_purgecache)
 #define avx_reflect_reg_upper128 STEPNAME(avx_reflect_reg_upper128)
-
+#define avx_cleancache           STEPNAME(avx_cleancache)
 
 #define fpu_pushcache       STEPNAME(fpu_pushcache)
 #define fpu_popcache        STEPNAME(fpu_popcache)
@@ -1318,6 +1332,8 @@
 #define mmx_purgecache      STEPNAME(mmx_purgecache)
 #define fpu_reflectcache    STEPNAME(fpu_reflectcache)
 #define fpu_unreflectcache  STEPNAME(fpu_unreflectcache)
+
+#define checkCRC          STEPNAME(checkCRC)
 
 #define CacheTransform STEPNAME(CacheTransform)
 #define la64_move64    STEPNAME(la64_move64)
@@ -1527,6 +1543,10 @@ void avx_forget_reg(dynarec_la64_t* dyn, int ninst, int a);
 // Push current value to the cache
 void avx_reflect_reg(dynarec_la64_t* dyn, int ninst, int a);
 void avx_reflect_reg_upper128(dynarec_la64_t* dyn, int ninst, int a, int forwrite);
+void avx_cleancache(dynarec_la64_t* dyn, int ninst);
+
+// in case of always_test, this insert a check of crc of the dynablock (and exit to ArmNext if wrong)
+void checkCRC(dynarec_la64_t* dyn, int ninst);
 
 void CacheTransform(dynarec_la64_t* dyn, int ninst, int cacheupd, int s1, int s2, int s3);
 

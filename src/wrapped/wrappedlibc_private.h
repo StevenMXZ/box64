@@ -757,7 +757,11 @@ GO(getwchar, uFv)
 GO(getwchar_unlocked, uFv)
 GOW(getwc_unlocked, uFS)
 GO(getwd, pFp)
-//GO(__getwd_chk, 
+#ifdef STATICBUILD
+// GO(__getwd_chk,
+#else
+GO(__getwd_chk, pFpL)
+#endif
 GO(getxattr, lFpppL)
 GOM(glob, iFEpipp)
 GOM(glob64, iFEpipp)
@@ -841,6 +845,7 @@ GO(inet_nsap_ntoa, pFipp)
 GO(inet_ntoa, pFu)
 GO(inet_ntop, pFippu)
 GOW(inet_pton, iFipp)
+GOM(__inet_pton_chk, iFEippL)
 //GO(__inet_pton_length, 
 GO(initgroups, iFpu)
 GOM(init_module, iFEpLp)
@@ -860,7 +865,11 @@ DATA(_IO_2_1_stdin_, 224)
 DATA(_IO_2_1_stdout_, 224)
 //GO(_IO_adjust_column, 
 //GO(_IO_adjust_wcolumn, 
+#ifdef PPC64LE
+GOWM(ioctl, iFEiLp)
+#else
 GOW(ioctl, iFiLN)
+#endif
 GO(_IO_default_doallocate, iFS)
 GO(_IO_default_finish, vFSi)
 GO(_IO_default_pbackfail, iFSi)
@@ -1215,7 +1224,11 @@ GO(__libc_realloc, pFpL)
 //GOW(__libc_secure_getenv, 
 //GO(__libc_siglongjmp, 
 GOM(__libc_start_main, iFEpippppp)
-//GO(__libc_system, 
+#ifdef STATICBUILD
+// GO(__libc_system, iFp)
+#else
+GO(__libc_system, iFp)
+#endif
 //GO(__libc_thread_freeres, 
 GO(__libc_valloc, pFL)
 //GO(__libc_vfork, 
@@ -1752,7 +1765,7 @@ GOWD(scalbnl, DFDi, scalbn)
 GOWM(scandir, iFEpppp)
 GOWM(scandir64, iFEpppp)
 GOWM(scandirat, iFipppp)
-//GOM(scandirat64, iFipppp)
+GOM(scandirat64, iFEipppp)
 GOM(scanf, iFpV)
 GO(__sched_cpualloc, pFL)
 GO(__sched_cpucount, iFLp)
@@ -1990,6 +2003,7 @@ GO(__strdup, pFp)
 GOW(strdup, pFp)
 GO(strerror, pFi)
 GOW(strerrorname_np, pFi)
+GOW(strerrordesc_np, pFi)
 GO(strerror_l, pFip)
 GO(__strerror_r, pFipL)
 GO(strerror_r, pFipL)
@@ -2236,10 +2250,18 @@ GO(thrd_exit, vFi)
 //GO(thrd_equal, 
 //GO(thrd_sleep, 
 //GO(thrd_yield, 
+//GO(tss_create,
+//GO(tss_get,
+//GO(tss_delete,
+//GO(tss_set,
 #else
 GO(thrd_equal, iFLL)
 GO(thrd_sleep, iFpp)
 GO(thrd_yield, vFv)
+GOM(tss_create, iFEpp)
+GO(tss_get, pFL)
+GO(tss_delete, vFL)
+GO(tss_set, iFLp)
 #endif
 GO(time, lFp)
 GO(timegm, lFp)

@@ -2240,6 +2240,40 @@ typedef struct my_GstAudioDecoderClass_s
   void*   _gst_reserved[20 - 4];
 } my_GstAudioDecoderClass_t;
 
+typedef struct my_GstAudioEncoder_s {
+  my_GstElement_t     parent;
+  void*               sinkpad;
+  void*               srcpad;
+  my_GRecMutex_t      stream_lock;
+  my_GstSegment_t     input_segment;
+  my_GstSegment_t     output_segment;
+  void*               priv;
+  void*              _gst_reserved[20];
+} my_GstAudioEncoder_t;
+
+typedef struct my_GstAudioEncoderClass_s {
+  my_GstElementClass_t  parent_class;
+  int       (*start)              (void* enc);
+  int       (*stop)               (void* enc);
+  int       (*set_format)         (void* enc, void* info);
+  int       (*handle_frame)       (void* enc, void* buffer);
+  void      (*flush)              (void* enc);
+  int       (*pre_push)           (void* enc, void* *buffer);
+  int       (*sink_event)         (void* enc, void* event);
+  int       (*src_event)          (void* enc, void* event);
+  void*     (*getcaps)            (void* enc, void* filter);
+  int       (*open)               (void* enc);
+  int       (*close)              (void* enc);
+  int       (*negotiate)          (void* enc);
+  int       (*decide_allocation)  (void* enc, void* query);
+  int       (*propose_allocation) (void* enc, void*  query);
+  int       (*transform_meta)     (void* enc, void* outbuf, void* meta, void* inbuf);
+  int       (*sink_query)         (void* encoder, void* query);
+  int       (*src_query)          (void* encoder, void* query);
+  void*     gst_reserved[20-3];
+} my_GstAudioEncoderClass_t;
+
+
 typedef struct my_GstVideoFilter_s {
   my_GstBaseTransform_t parent;
   int                   negotiated;
@@ -2339,6 +2373,16 @@ typedef struct my_GstURIHandlerInterface_s {
   int    (* set_uri)            (void* handler, void* uri, void* error);
 } my_GstURIHandlerInterface_t;
 
+typedef struct my_GInitableInterface_s {
+  my_GTypeInterface_t parent;
+  int    (* init) (void* initable, void* cancellable, void*error);
+} my_GInitableInterface_t;
+
+typedef struct my_GAsyncInitableInterface_s {
+  my_GTypeInterface_t parent;
+  void     (* init_async)  (void* initable, int io_priority, void* cancellable, void* callback, void* user_data);
+  int      (* init_finish) (void* initable, void* res, void* error);
+} my_GAsyncInitableInterface_t;
 
 // GTypeValueTable
 typedef struct my_GTypeValueTable_s {
@@ -2390,7 +2434,6 @@ typedef struct my_GtkTypeInfo_s {
 my_GTypeValueTable_t* findFreeGTypeValueTable(my_GTypeValueTable_t* fcts);
 my_GTypeInfo_t* findFreeGTypeInfo(my_GTypeInfo_t* fcts, size_t parent);
 my_GtkTypeInfo_t* findFreeGtkTypeInfo(my_GtkTypeInfo_t* fcts, size_t parent);
-void* find_class_init_Fct(void* fct, size_t parent);
 // defined in wrappedgio2.c
 my_GDBusInterfaceVTable_t* findFreeGDBusInterfaceVTable(my_GDBusInterfaceVTable_t* fcts);
 
@@ -2477,11 +2520,14 @@ GTKCLASS(GstBaseSrc)                \
 GTKCLASS(GstPushSrc)                \
 GTKCLASS(GstGLBaseSrc)              \
 GTKCLASS(GstAudioDecoder)           \
+GTKCLASS(GstAudioEncoder)           \
 GTKCLASS(GstVideoFilter)            \
 GTKCLASS(GstAudioFilter)            \
 GTKCLASS(GstBufferPool)             \
 GTKCLASS(GstVideoBufferPool)        \
 GTKIFACE(GstURIHandler)             \
+GTKIFACE(GInitable)                 \
+GTKIFACE(GAsyncInitable)            \
 
 #define GTKCLASS(A) void Set##A##ID(size_t id);
 #define GTKIFACE(A) GTKCLASS(A)

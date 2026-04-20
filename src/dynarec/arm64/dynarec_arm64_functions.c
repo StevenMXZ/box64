@@ -786,13 +786,13 @@ void inst_name_pass3(dynarec_native_t* dyn, int ninst, const char* name, rex_t r
     }
 
     static char buf[4096];
-    int length = sprintf(buf, "barrier=%d state=%d/%s(%s->%s)/%d, set=%X/%X, use=%X, need=%X/%X, sm=%d(%d/%d/%d)",
+    int length = sprintf(buf, "barrier=%d state=%d/%s(%s->%s)/%c, set=%X/%X, use=%X, need=%X/%X, sm=%d(%d/%d/%d)",
         dyn->insts[ninst].x64.barrier,
         dyn->insts[ninst].x64.state_flags,
         df_status[dyn->f],
         df_status[dyn->insts[ninst].f_entry],
         df_status[dyn->insts[ninst].f_exit],
-        dyn->insts[ninst].df_notneeded,
+        dyn->insts[ninst].df_needed?'N':(dyn->insts[ninst].df_notneeded?'U':'-'),
         dyn->insts[ninst].x64.set_flags,
         dyn->insts[ninst].x64.gen_flags,
         dyn->insts[ninst].x64.use_flags,
@@ -859,11 +859,11 @@ void inst_name_pass3(dynarec_native_t* dyn, int ninst, const char* name, rex_t r
             }
         length += sprintf(buf + length, ")%s", (dyn->need_dump > 1) ? "\e[0;32m" : "");
     }
-    if (dyn->insts[ninst].n.xmm_used || dyn->insts[ninst].n.xmm_unneeded) {
-        length += sprintf(buf + length, " xmmUsed=%04x/unneeded=%04x", dyn->insts[ninst].n.xmm_used, dyn->insts[ninst].n.xmm_unneeded);
+    if (dyn->insts[ninst].n.xmm_used || dyn->insts[ninst].n.xmm_unneeded || dyn->insts[ninst].n.xmm_needed) {
+        length += sprintf(buf + length, " xmmUsed=%04x/needed=%04x/unneeded=%04x", dyn->insts[ninst].n.xmm_used, dyn->insts[ninst].n.xmm_needed, dyn->insts[ninst].n.xmm_unneeded);
     }
-    if (dyn->insts[ninst].n.ymm_used || dyn->insts[ninst].n.ymm_unneeded) {
-        length += sprintf(buf + length, " ymmUsed=%04x/unneeded=%04x", dyn->insts[ninst].n.ymm_used, dyn->insts[ninst].n.ymm_unneeded);
+    if (dyn->insts[ninst].n.ymm_used || dyn->insts[ninst].n.ymm_unneeded || dyn->insts[ninst].n.ymm_needed) {
+        length += sprintf(buf + length, " ymmUsed=%04x/needed=%04x/unneeded=%04x", dyn->insts[ninst].n.ymm_used, dyn->insts[ninst].n.ymm_needed, dyn->insts[ninst].n.ymm_unneeded);
     }
     if (dyn->ymm_zero || dyn->insts[ninst].ymm0_add || dyn->insts[ninst].ymm0_sub || dyn->insts[ninst].ymm0_out) {
         length += sprintf(buf + length, " ymm0=(%04x/%04x+%04x-%04x=%04x)", dyn->ymm_zero, dyn->insts[ninst].ymm0_in, dyn->insts[ninst].ymm0_add, dyn->insts[ninst].ymm0_sub, dyn->insts[ninst].ymm0_out);
@@ -901,7 +901,7 @@ void inst_name_pass3(dynarec_native_t* dyn, int ninst, const char* name, rex_t r
         }
         dyn->gdbjit_block = GdbJITBlockAddLine(dyn->gdbjit_block, (dyn->native_start + dyn->insts[ninst].address), inst_name);
     }
-    if (BOX64ENV(dynarec_perf_map) && BOX64ENV(dynarec_perf_map_fd) != -1) {
+    if (BOX64ENV(dynarec_perf_map) && (BOX64ENV(dynarec_perf_map_fd) != -1) && dyn->insts[ninst].size) {
         writePerfMap(dyn->insts[ninst].x64.addr, dyn->native_start + dyn->insts[ninst].address, dyn->insts[ninst].size / 4, name);
     }
     if(length>sizeof(buf)) printf_log(LOG_NONE, "Warning: buf to small in inst_name_pass3 (%d vs %zd)\n", length, sizeof(buf));
@@ -991,27 +991,23 @@ uint8_t mark_natflag(dynarec_arm_t* dyn, int ninst, uint8_t flag, int before)
     return flag;
 }
 
-uint8_t flag2native(uint8_t flags)
+uint8_t flag2native(uint8_t flags, int vf_is_p)
 {
     uint8_t ret = 0;
     #ifdef ARM64
     if(flags&X_ZF) ret|=NF_EQ;
     if(flags&X_SF) ret|=NF_SF;
-    if(flags&X_OF) ret|=NF_VF;
+    if(!vf_is_p)
+        if(flags&X_OF) ret|=NF_VF;
     if(flags&X_CF) ret|=NF_CF;
+    if(vf_is_p)
+        if(flags&X_PF) ret|=NF_PF_V;    // but no opcode can generate both NF_VF & NF_PF_V at the same time!
     #else
     // no native flags on rv64 or la64
     #endif
     return ret;
 }
-
-int flagIsNative(uint8_t flags)
-{
-    if(flags&(X_AF|X_PF)) return 0;
-    return 1;
-}
-
-static uint8_t getNativeFlagsUsed(dynarec_arm_t* dyn, int start, uint8_t flags)
+static uint8_t getNativeFlagsUsed(dynarec_arm_t* dyn, int start, uint8_t flags, int vf_is_p)
 {
     // propagate and check wich flags are actually used
     uint8_t used_flags = 0;
@@ -1059,21 +1055,21 @@ static uint8_t getNativeFlagsUsed(dynarec_arm_t* dyn, int start, uint8_t flags)
         }
         if(ninst!=start && dyn->insts[ninst].x64.use_flags) {
             // some flags not compatible with native, partial use not allowed
-            if(flag2native(dyn->insts[ninst].x64.use_flags)!=dyn->insts[ninst].use_nat_flags)
+            if(flag2native(dyn->insts[ninst].x64.use_flags, vf_is_p)!=dyn->insts[ninst].use_nat_flags)
                 return 0;
             // check if flags are used, but not the natives ones
             //if(dyn->insts[ninst].use_nat_flags&~used_flags)
             //    return 0;
         }
         // check if flags are generated without native option
-        if((start!=ninst) && dyn->insts[ninst].x64.gen_flags && (flag2native(dyn->insts[ninst].x64.gen_flags&dyn->insts[ninst].x64.need_after)&used_flags)) {
-            if(used_flags&~flag2native(dyn->insts[ninst].x64.gen_flags&dyn->insts[ninst].x64.need_after))
+        if((start!=ninst) && dyn->insts[ninst].x64.gen_flags && (flag2native(dyn->insts[ninst].x64.gen_flags&dyn->insts[ninst].x64.need_after, vf_is_p)&used_flags)) {
+            if(used_flags&~flag2native(dyn->insts[ninst].x64.gen_flags&dyn->insts[ninst].x64.need_after, vf_is_p))
                 return 0;   // partial covert, not supported for now (TODO: this might be fixable)
             else
                 return nat_flags_used?used_flags:0;  // full covert... End of propagation
         }
         // check if flags are still needed
-        if(!(flag2native(dyn->insts[ninst].x64.need_after)&flags))
+        if(!(flag2native(dyn->insts[ninst].x64.need_after, vf_is_p)&flags))
             return nat_flags_used?used_flags:0;
         // check if flags are destroyed, cancel the use then
         if(dyn->insts[ninst].nat_flags_op && (start!=ninst))
@@ -1099,13 +1095,15 @@ static void propagateNativeFlags(dynarec_arm_t* dyn, int start)
 {
     int ninst = start;
     // those are the flags generated by the opcode and used later on
-    uint8_t flags = dyn->insts[ninst].set_nat_flags&flag2native(dyn->insts[ninst].x64.need_after);
+    int vf_is_p = (dyn->insts[ninst].set_nat_flags&NF_PF_V)?1:0;
+    uint8_t flags = dyn->insts[ninst].set_nat_flags&flag2native(dyn->insts[ninst].x64.need_after, vf_is_p);
     //check if they are actualy used before starting
 //printf_log(LOG_INFO, "propagateNativeFlags called for start=%d, flags=%x, will need:%x\n", start, flags, flag2native(dyn->insts[ninst].x64.need_after));
     if(!flags) return;
     // also check if some native flags are used but not genereated here
-    if(flag2native(dyn->insts[ninst].x64.use_flags)&~flags) return;
-    uint8_t used_flags = getNativeFlagsUsed(dyn, start, flags);
+    if(flag2native(dyn->insts[ninst].x64.use_flags, vf_is_p)&~flags) return;
+    if(flag2native(dyn->insts[ninst].x64.need_after, vf_is_p)&~flags) return;
+    uint8_t used_flags = getNativeFlagsUsed(dyn, start, flags, vf_is_p);
 //printf_log(LOG_INFO, " will use:%x, carry:%d, generate inverted carry:%d\n", used_flags, used_flags&NF_CF, dyn->insts[ninst].gen_inverted_carry);
     if(!used_flags) return; // the flags wont be used, so just cancel
     int nc = dyn->insts[ninst].gen_inverted_carry?0:1;
@@ -1122,17 +1120,17 @@ static void propagateNativeFlags(dynarec_arm_t* dyn, int start)
             return;
         }
         // check if flags are generated without native option
-        if((start!=ninst) && dyn->insts[ninst].x64.gen_flags && (flag2native(dyn->insts[ninst].x64.gen_flags&dyn->insts[ninst].x64.need_after)&used_flags))
+        if((start!=ninst) && dyn->insts[ninst].x64.gen_flags && (flag2native(dyn->insts[ninst].x64.gen_flags&dyn->insts[ninst].x64.need_after, vf_is_p)&used_flags))
             return;
         // mark the opcode
-        uint8_t use_flags = flag2native(dyn->insts[ninst].x64.need_before|dyn->insts[ninst].x64.need_after);
-        if(dyn->insts[ninst].x64.use_flags) use_flags |= flag2native(dyn->insts[ninst].x64.use_flags);  // should not change anything
+        uint8_t use_flags = flag2native(dyn->insts[ninst].x64.need_before|dyn->insts[ninst].x64.need_after, vf_is_p);
+        if(dyn->insts[ninst].x64.use_flags) use_flags |= flag2native(dyn->insts[ninst].x64.use_flags, vf_is_p);  // should not change anything
 //printf_log(LOG_INFO, " marking ninst=%d with %x | %x&%x => %x\n", ninst, dyn->insts[ninst].need_nat_flags, used_flags, use_flags, dyn->insts[ninst].need_nat_flags | (used_flags&use_flags));
         dyn->insts[ninst].need_nat_flags |= used_flags&use_flags;
         if(carry) dyn->insts[ninst].normal_carry = nc;
         if(carry && dyn->insts[ninst].invert_carry) nc = 0;
         // check if flags are still needed
-        if(!(flag2native(dyn->insts[ninst].x64.need_after)&used_flags))
+        if(!(flag2native(dyn->insts[ninst].x64.need_after, vf_is_p)&used_flags))
             return;
         // go next
         if(!dyn->insts[ninst].x64.has_next) {
@@ -1153,7 +1151,7 @@ void updateNativeFlags(dynarec_native_t* dyn)
         return;
     // forward check if native flags are used
     for(int ninst=0; ninst<dyn->size; ++ninst)
-        if(flag2native(dyn->insts[ninst].x64.gen_flags) && (dyn->insts[ninst].nat_flags_op==NAT_FLAG_OP_TOUCH)) {
+        if(flag2native(dyn->insts[ninst].x64.gen_flags,(dyn->insts[ninst].set_nat_flags&NF_PF_V)?1:0) && (dyn->insts[ninst].nat_flags_op==NAT_FLAG_OP_TOUCH)) {
             propagateNativeFlags(dyn, ninst);
         }
 }
@@ -1183,7 +1181,7 @@ int nativeFlagsNeedsTransform(dynarec_arm_t* dyn, int ninst)
         flags_after = dyn->insts[jmp].before_nat_flags;
         nc_after = dyn->insts[jmp].normal_carry_before;
     }
-    uint8_t flags_x86 = flag2native(dyn->insts[jmp].x64.need_before);
+    uint8_t flags_x86 = flag2native(dyn->insts[jmp].x64.need_before, (dyn->insts[jmp].before_nat_flags&NF_PF_V)?1:0);
     flags_x86 &= ~flags_after;
     if((flags_before&NF_CF) && (flags_after&NF_CF) && (nc_before!=nc_after))
         return 1;
@@ -1222,34 +1220,89 @@ static uint32_t getXYMMMask(dynarec_arm_t* dyn, int ninst)
     return ret;
 }
 
-static void propagateXYMMUneeded(dynarec_arm_t* dyn, int ninst, uint16_t mask_x, uint16_t mask_y)
+static void propagateXYMMNeeded(dynarec_arm_t* dyn, int ninst, uint16_t mask_x, uint16_t mask_y)
 {
-    if(!ninst) return;
-    ninst = getNominalPred(dyn, ninst);
     while(ninst>=0) {
-        mask_x &= ~dyn->insts[ninst].n.xmm_used;
-        mask_y &= ~dyn->insts[ninst].n.ymm_used;
-        if(!mask_x && !mask_y) return; // used, value is needed
-        if(dyn->insts[ninst].x64.barrier&BARRIER_FLOAT) return; // barrier, value is needed
+        // removed unneeded regs
         mask_x &= ~dyn->insts[ninst].n.xmm_unneeded;
         mask_y &= ~dyn->insts[ninst].n.ymm_unneeded;
-        if(!mask_x && !mask_y) return; // already handled
-        if(dyn->insts[ninst].x64.jmp) return;   // stop when a jump is detected, that gets too complicated
-        dyn->insts[ninst].n.xmm_unneeded |= mask_x; // flags
-        dyn->insts[ninst].n.ymm_unneeded |= mask_y; // flags
-        ninst = getNominalPred(dyn, ninst); // continue
+        // removed already needed from mask
+        mask_x &= ~dyn->insts[ninst].n.xmm_needed;
+        mask_y &= ~dyn->insts[ninst].n.ymm_needed;
+        // already handled
+        if(!mask_x && !mask_y) return;
+        // added the unneeded value
+        dyn->insts[ninst].n.xmm_needed |= mask_x;
+        dyn->insts[ninst].n.ymm_needed |= mask_y;
+        for(int i=1; i<dyn->insts[ninst].pred_sz; ++i) {
+            int j = dyn->insts[ninst].pred[i];
+            // barrier or callret, value is needed
+            if(!(dyn->insts[j].x64.barrier&BARRIER_FLOAT)
+              && !(dyn->insts[j].x64.has_callret))
+                propagateXYMMNeeded(dyn, j, mask_x, mask_y);
+        }
+        if(dyn->insts[ninst].pred_sz)
+            ninst = dyn->insts[ninst].pred[0];
+        else
+            ninst = -1;
+        if(ninst>=0)
+            if((dyn->insts[ninst].x64.barrier&BARRIER_FLOAT)
+              || (dyn->insts[ninst].x64.has_callret))
+                return;
+    }
+}
+
+static void propagateXYMMUneeded(dynarec_arm_t* dyn, int ninst, uint16_t mask_x, uint16_t mask_y)
+{
+    while(ninst>=0) {
+        // removed needed regs
+        mask_x &= ~dyn->insts[ninst].n.xmm_needed;
+        mask_y &= ~dyn->insts[ninst].n.ymm_needed;
+        // removed already unneeded from mask
+        mask_x &= ~dyn->insts[ninst].n.xmm_unneeded;
+        mask_y &= ~dyn->insts[ninst].n.ymm_unneeded;
+        // already handled
+        if(!mask_x && !mask_y) return;
+        // barrier or callret, value is needed
+        if(dyn->insts[ninst].x64.barrier&BARRIER_FLOAT) return;
+        if(dyn->insts[ninst].x64.has_callret) return;
+        // added the unneeded value
+        dyn->insts[ninst].n.xmm_unneeded |= mask_x;
+        dyn->insts[ninst].n.ymm_unneeded |= mask_y;
+        for(int i=1; i<dyn->insts[ninst].pred_sz; ++i)
+            propagateXYMMUneeded(dyn, dyn->insts[ninst].pred[i], mask_x, mask_y);
+        if(dyn->insts[ninst].pred_sz)
+            ninst = dyn->insts[ninst].pred[0];
+        else
+            ninst = -1;
     }
 }
 
 void updateUneeded(dynarec_arm_t* dyn)
 {
+    propagate_nodf(dyn);
+
     if(!dyn->use_xmm && !dyn->use_ymm)
         return;
-    for(int ninst=0; ninst<dyn->size; ++ninst) {
-        if(dyn->insts[ninst].n.xmm_unneeded || dyn->insts[ninst].n.ymm_unneeded)
-            propagateXYMMUneeded(dyn, ninst, dyn->insts[ninst].n.xmm_unneeded, dyn->insts[ninst].n.ymm_unneeded);
-        if(dyn->insts[ninst].df_notneeded)
-            propagate_nodf(dyn, ninst);
+    // first propagate the needed regs: those which are used and are not unneeded
+    for(int ninst=dyn->size-1; ninst>=0; --ninst) {
+        uint16_t xmm_needed = dyn->insts[ninst].n.xmm_used&~dyn->insts[ninst].n.xmm_unneeded;
+        uint16_t ymm_needed = dyn->insts[ninst].n.ymm_used&~dyn->insts[ninst].n.ymm_unneeded;
+        if((dyn->insts[ninst].x64.barrier&BARRIER_FLOAT) || (dyn->insts[ninst].x64.jmp && (dyn->insts[ninst].x64.jmp_insts==-1)))
+        {
+            if(dyn->use_xmm) xmm_needed = 0xffff;
+            if(dyn->use_ymm) ymm_needed = 0xffff;
+        }
+        if(xmm_needed || ymm_needed)
+            propagateXYMMNeeded(dyn, ninst, xmm_needed, ymm_needed);
+
+    }
+    // then proagate the unneeded one: those which are not needed (not used anymore and will be overwritten)
+    for(int ninst=dyn->size-1; ninst>=0; --ninst) {
+        if(dyn->insts[ninst].n.xmm_unneeded || dyn->insts[ninst].n.ymm_unneeded) {
+            for(int i=0; i<dyn->insts[ninst].pred_sz; ++i)
+                propagateXYMMUneeded(dyn, dyn->insts[ninst].pred[i], dyn->insts[ninst].n.xmm_unneeded, dyn->insts[ninst].n.ymm_unneeded);
+        }
     }
     // try to add some preload of XYMM on jump were it would make sense
     for(int ninst=0; ninst<dyn->size; ++ninst)
@@ -1416,6 +1469,7 @@ void updateYmm0s(dynarec_arm_t* dyn, int ninst, int max_ninst_reached)
             }
         } else if (can_incr) {
             // We always have ninst == max_ninst_reached when can_incr == 1
+            dyn->insts[ninst].ymm0_out = dyn->insts[ninst].ymm0_add & ~dyn->insts[ninst].ymm0_sub;
             ++max_ninst_reached;
         } else {
             // We didn't update anything, we can leave
@@ -1429,6 +1483,7 @@ void updateYmm0s(dynarec_arm_t* dyn, int ninst, int max_ninst_reached)
 // AVX helpers
 void avx_mark_zero(dynarec_arm_t* dyn, int ninst, int reg)
 {
+    dyn->use_ymm = 1;
     dyn->ymm_zero |= (1<<reg);
 }
 
@@ -1448,6 +1503,7 @@ int is_avx_zero_unset(dynarec_arm_t* dyn, int ninst, int reg)
 
 void avx_mark_zero_reset(dynarec_arm_t* dyn, int ninst)
 {
+    dyn->use_ymm = 1;
     dyn->ymm_zero = 0;
 }
 

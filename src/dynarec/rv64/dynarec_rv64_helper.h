@@ -461,6 +461,23 @@
         VLE_V(a, ed, sew, VECTOR_UNMASKED, VECTOR_NFIELD1);                                  \
     }
 
+#define GETEX_PARTIAL_vector(a, w, D, sew, multiple)                                         \
+    if (MODREG) {                                                                            \
+        SET_ELEMENT_WIDTH(x1, sew, 1);                                                       \
+        a = sse_get_reg_vector(dyn, ninst, x1, (nextop & 7) + (rex.b << 3), w, sew);         \
+    } else {                                                                                 \
+        vector_vsetvli(dyn, ninst, x1, sew, VECTOR_LMUL1, multiple);                         \
+        SMREAD();                                                                            \
+        addr = geted(dyn, addr, ninst, nextop, &ed, x3, x2, &fixedaddress, rex, NULL, 0, D); \
+        a = fpu_get_scratch(dyn);                                                            \
+        VLE_V(a, ed, sew, VECTOR_UNMASKED, VECTOR_NFIELD1);                                  \
+        dyn->vector_sew = VECTOR_SEWNA;                                                      \
+    }
+
+#define GETEX64_vector(a, w, D, sew)   GETEX_PARTIAL_vector(a, w, D, sew, 0.5)
+#define GETEX32_vector(a, w, D, sew)   GETEX_PARTIAL_vector(a, w, D, sew, 0.25)
+#define GETEX16_vector(a, w, D, sew)   GETEX_PARTIAL_vector(a, w, D, sew, 0.125)
+
 // Put Back EX if it was a memory and not an emm register
 #define PUTEX_vector(a, sew)                                \
     if (!MODREG) {                                          \
@@ -1079,6 +1096,15 @@
 #ifndef SET_HASCALLRET
 #define SET_HASCALLRET()
 #endif
+#ifndef CALLRET_RET
+#define CALLRET_RET(A)   do {if(BOX64DRENV(dynarec_callret)>1) {NOP();}} while(0)
+#endif
+#ifndef CALLRET_GETRET
+#define CALLRET_GETRET()    (dyn->callrets?(dyn->callrets[dyn->callret_size].offs-dyn->native_size):0)
+#endif
+#ifndef CALLRET_LOOP
+#define CALLRET_LOOP()  NOP()
+#endif
 #define UFLAG_OP1(A) \
     if (dyn->insts[ninst].x64.gen_flags) { SDxw(A, xEmu, offsetof(x64emu_t, op1)); }
 #define UFLAG_OP2(A) \
@@ -1236,9 +1262,8 @@
 #define jump_to_epilog      STEPNAME(jump_to_epilog)
 #define jump_to_epilog_fast STEPNAME(jump_to_epilog_fast)
 #define jump_to_next        STEPNAME(jump_to_next)
-#define ret_to_epilog       STEPNAME(ret_to_epilog)
-#define retn_to_epilog      STEPNAME(retn_to_epilog)
-#define iret_to_epilog      STEPNAME(iret_to_epilog)
+#define ret_to_next         STEPNAME(ret_to_next)
+#define iret_to_next        STEPNAME(iret_to_next)
 #define call_c              STEPNAME(call_c)
 #define call_n              STEPNAME(call_n)
 #define grab_segdata        STEPNAME(grab_segdata)
@@ -1403,9 +1428,8 @@ uintptr_t geted16(dynarec_rv64_t* dyn, uintptr_t addr, int ninst, uint8_t nextop
 void jump_to_epilog(dynarec_rv64_t* dyn, uintptr_t ip, int reg, int ninst);
 void jump_to_epilog_fast(dynarec_rv64_t* dyn, uintptr_t ip, int reg, int ninst);
 void jump_to_next(dynarec_rv64_t* dyn, uintptr_t ip, int reg, int ninst, int is32bits);
-void ret_to_epilog(dynarec_rv64_t* dyn, uintptr_t ip, int ninst, rex_t rex);
-void retn_to_epilog(dynarec_rv64_t* dyn, uintptr_t ip, int ninst, rex_t rex, int n);
-void iret_to_epilog(dynarec_rv64_t* dyn, uintptr_t ip, int ninst, int is64bits);
+void ret_to_next(dynarec_rv64_t* dyn, uintptr_t ip, int ninst, rex_t rex);
+void iret_to_next(dynarec_rv64_t* dyn, uintptr_t ip, int ninst, int is32bits, int is64bits);
 void call_c(dynarec_rv64_t* dyn, int ninst, rv64_consts_t fnc, int reg, int ret, int saveflags, int savereg, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6);
 void call_n(dynarec_rv64_t* dyn, int ninst, void* fnc, int w);
 void grab_segdata(dynarec_rv64_t* dyn, uintptr_t addr, int ninst, int reg, int segment);

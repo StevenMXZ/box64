@@ -782,14 +782,16 @@ uintptr_t RunF0(x64emu_t *emu, rex_t rex, uintptr_t addr)
                     GETE8xw(0);
                     switch((nextop>>3)&7) {
                         case 1:
+                            #ifndef TEST_INTERPRETER
                             if(rex.w && ((uintptr_t)ED)&0xf) {
                                 EmitSignal(emu, X64_SIGSEGV, (void*)R_RIP, 0xbad0); // GPF
                             }
+                            #endif
                             CHECK_FLAGS(emu);
                             GETGD;
 #if defined(DYNAREC) && !defined(TEST_INTERPRETER)
                             if (rex.w) {
-#if defined(__riscv) || defined(__loongarch64)
+#if defined(__riscv) || defined(__loongarch64) || defined(__powerpc64__)
 #if defined(__loongarch64)
                                 if (cpuext.scq) {
                                     do {
@@ -1157,6 +1159,18 @@ uintptr_t RunF0(x64emu_t *emu, rex_t rex, uintptr_t addr)
                     pthread_mutex_unlock(&my_context->mutex_lock);
 #endif
                     break;
+                case 3: /* NEG Eb */
+#if defined(DYNAREC) && !defined(TEST_INTERPRETER)
+                    do {
+                        tmp8u2 = native_lock_read_b(EB);
+                        tmp8u2 = neg8(emu, tmp8u2);
+                    } while (native_lock_write_b(EB, tmp8u2));
+#else
+                    pthread_mutex_lock(&my_context->mutex_lock);
+                    EB->byte[0] = neg8(emu, EB->byte[0]);
+                    pthread_mutex_unlock(&my_context->mutex_lock);
+#endif
+                    break;
                 default:
                     return 0;
             }
@@ -1191,6 +1205,31 @@ uintptr_t RunF0(x64emu_t *emu, rex_t rex, uintptr_t addr)
                     } else {
                         pthread_mutex_lock(&my_context->mutex_lock);
                         ED->dword[0] = not32(emu, ED->dword[0]);
+                        pthread_mutex_unlock(&my_context->mutex_lock);
+                    }
+#endif
+                    break;
+                case 3: /* NEG Ed */
+#if defined(DYNAREC) && !defined(TEST_INTERPRETER)
+                    if (rex.w)
+                        do {
+                            tmp64u = native_lock_read_dd(ED);
+                            tmp64u = neg64(emu, tmp64u);
+                        } while (native_lock_write_dd(ED, tmp64u));
+                    else {
+                        do {
+                            tmp32u = native_lock_read_d(ED);
+                            tmp32u = neg32(emu, tmp32u);
+                        } while (native_lock_write_d(ED, tmp32u));
+                    }
+#else
+                    if (rex.w) {
+                        pthread_mutex_lock(&my_context->mutex_lock);
+                        ED->q[0] = neg64(emu, ED->q[0]);
+                        pthread_mutex_unlock(&my_context->mutex_lock);
+                    } else {
+                        pthread_mutex_lock(&my_context->mutex_lock);
+                        ED->dword[0] = neg32(emu, ED->dword[0]);
                         pthread_mutex_unlock(&my_context->mutex_lock);
                     }
 #endif

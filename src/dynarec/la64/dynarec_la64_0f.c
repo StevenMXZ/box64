@@ -79,6 +79,31 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 }
             } else {
                 switch ((nextop >> 3) & 7) {
+                    case 0:
+                        INST_NAME("SGDT Ed");
+                        addr = geted(dyn, addr, ninst, nextop, &ed, x3, x2, &fixedaddress, rex, NULL, 0, 0);
+                        MOV32w(x1, 0x7f);
+                        ST_H(x1, wback, 0);
+                        if (rex.is32bits) {
+                            MOV32w(x1, 0x3000);
+                            ST_W(x1, wback, 2);
+                        } else {
+                            MOV64x(x1, 0xfffffe0000077000LL);
+                            ST_D(x1, wback, 2);
+                        }
+                        break;
+                    case 1:
+                        INST_NAME("SIDT Ed");
+                        addr = geted(dyn, addr, ninst, nextop, &ed, x3, x2, &fixedaddress, rex, NULL, 0, 0);
+                        MOV32w(x1, 0xfff);
+                        ST_H(x1, wback, 0);
+                        if (rex.is32bits) {
+                            ST_W(xZR, wback, 2);
+                        } else {
+                            MOV64x(x1, 0xfffffe0000000000LL);
+                            ST_D(x1, wback, 2);
+                        }
+                        break;
                     default:
                         DEFAULT;
                 }
@@ -417,7 +442,7 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             } else {
                 INST_NAME("UCOMISS Gx, Ex");
             }
-            SETFLAGS(X_ALL, SF_SET_DF, NAT_FLAGS_NOFUSION);
+            SETFLAGS(X_ALL, SF_SET, NAT_FLAGS_NOFUSION);
             nextop = F8;
             GETGX(d0, 0);
             GETEXSS(v0, 0, 0);
@@ -903,7 +928,25 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             nextop = F8;
             GETEX(q0, 0, 0);
             GETGX(v0, 1);
+            if (!BOX64ENV(dynarec_fastnan)) {
+                v1 = fpu_get_scratch(dyn);
+                d0 = fpu_get_scratch(dyn);
+                d1 = fpu_get_scratch(dyn);
+                VFCMP_S(v1, q0, v0, cUN);
+                VFCMP_S(d0, v0, v0, cUN);
+                MOV32w(x5, 0x00400000);
+                VREPLGR2VR_W(d1, x5);
+                VOR_V(d1, v0, d1);
+            }
             VFADD_S(v0, v0, q0);
+            if (!BOX64ENV(dynarec_fastnan)) {
+                VBITSEL_V(v0, v0, d1, d0);
+                VFCMP_S(d0, v0, v0, cUN);
+                VANDN_V(v1, v1, d0);
+                VLDI(d0, 0b011111111100);
+                VSLLI_W(d0, d0, 20);
+                VBITSEL_V(v0, v0, d0, v1);
+            }
             break;
         case 0x59:
             INST_NAME("MULPS Gx, Ex");
@@ -913,17 +956,21 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             if (!BOX64ENV(dynarec_fastnan)) {
                 v0 = fpu_get_scratch(dyn);
                 v1 = fpu_get_scratch(dyn);
+                d0 = fpu_get_scratch(dyn);
                 VFCMP_S(v0, q0, q1, cUN);
+                VFCMP_S(d0, q1, q1, cUN);
+                MOV32w(x5, 0x00400000);
+                VREPLGR2VR_W(v1, x5);
+                VOR_V(v1, q1, v1);
             }
             VFMUL_S(q1, q1, q0);
             if (!BOX64ENV(dynarec_fastnan)) {
+                VBITSEL_V(q1, q1, v1, d0);
                 VFCMP_S(v1, q1, q1, cUN);
                 VANDN_V(v0, v0, v1);
-                VLDI(v1, 0b011111111100); // broadcast 0xFFFFFFFFFFFFFFFC
+                VLDI(v1, 0b011111111100);
                 VSLLI_W(v1, v1, 20);
-                VAND_V(v1, v0, v1);
-                VANDN_V(v0, v0, q1);
-                VOR_V(q1, v0, v1);
+                VBITSEL_V(q1, q1, v1, v0);
             }
             break;
         case 0x5A:
@@ -948,17 +995,21 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             if (!BOX64ENV(dynarec_fastnan)) {
                 v0 = fpu_get_scratch(dyn);
                 v1 = fpu_get_scratch(dyn);
+                d0 = fpu_get_scratch(dyn);
                 VFCMP_S(v0, q0, q1, cUN);
+                VFCMP_S(d0, q1, q1, cUN);
+                MOV32w(x5, 0x00400000);
+                VREPLGR2VR_W(v1, x5);
+                VOR_V(v1, q1, v1);
             }
             VFSUB_S(q1, q1, q0);
             if (!BOX64ENV(dynarec_fastnan)) {
+                VBITSEL_V(q1, q1, v1, d0);
                 VFCMP_S(v1, q1, q1, cUN);
                 VANDN_V(v0, v0, v1);
-                VLDI(v1, 0b011111111100); // broadcast 0xFFFFFFFFFFFFFFFC
+                VLDI(v1, 0b011111111100);
                 VSLLI_W(v1, v1, 20);
-                VAND_V(v1, v0, v1);
-                VANDN_V(v0, v0, q1);
-                VOR_V(q1, v0, v1);
+                VBITSEL_V(q1, q1, v1, v0);
             }
             break;
         case 0x5D:
@@ -978,17 +1029,21 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             if (!BOX64ENV(dynarec_fastnan)) {
                 v0 = fpu_get_scratch(dyn);
                 v1 = fpu_get_scratch(dyn);
+                d0 = fpu_get_scratch(dyn);
                 VFCMP_S(v0, q0, q1, cUN);
+                VFCMP_S(d0, q1, q1, cUN);
+                MOV32w(x5, 0x00400000);
+                VREPLGR2VR_W(v1, x5);
+                VOR_V(v1, q1, v1);
             }
             VFDIV_S(q1, q1, q0);
             if (!BOX64ENV(dynarec_fastnan)) {
+                VBITSEL_V(q1, q1, v1, d0);
                 VFCMP_S(v1, q1, q1, cUN);
                 VANDN_V(v0, v0, v1);
-                VLDI(v1, 0b011111111100); // broadcast 0xFFFFFFFFFFFFFFFC
+                VLDI(v1, 0b011111111100);
                 VSLLI_W(v1, v1, 20);
-                VAND_V(v1, v0, v1);
-                VANDN_V(v0, v0, q1);
-                VOR_V(q1, v0, v1);
+                VBITSEL_V(q1, q1, v1, v0);
             }
             break;
         case 0x5F:
@@ -1099,7 +1154,7 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             GETG;
             v0 = mmx_get_reg_empty(dyn, ninst, x1, x2, x3, gd);
             if (MODREG) {
-                ed = TO_NAT(nextop & 7);
+                ed = TO_NAT((nextop & 0x07) + (rex.b << 3));
                 if (rex.w) {
                     MOVGR2FR_D(v0, ed);
                 } else {
@@ -1941,13 +1996,16 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             }
             BNE_MARK(ed, xZR);
             IFX (X_ZF) ORI(xFlags, xFlags, 1 << F_ZF);
+            if (BOX64DRENV(dynarec_safeflags)) {
+                IFX (X_PF) ORI(xFlags, xFlags, 1 << F_PF);
+            }
             B_MARK2_nocond;
             MARK;
             CTZxw(gd, ed);
-            MARK2;
-            IFX (BOX64DRENV(dynarec_safeflags)) {
+            if (BOX64DRENV(dynarec_safeflags)) {
                 IFX (X_PF) emit_pf(dyn, ninst, gd, x2, x5);
             }
+            MARK2;
             SPILL_EFLAGS();
             break;
         case 0xBD:
@@ -1968,15 +2026,18 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             }
             BNE_MARK(ed, xZR);
             IFX (X_ZF) ORI(xFlags, xFlags, 1 << F_ZF);
+            if (BOX64DRENV(dynarec_safeflags)) {
+                IFX (X_PF) ORI(xFlags, xFlags, 1 << F_PF);
+            }
             B_MARK2_nocond;
             MARK;
             CLZxw(gd, ed);
             ADDI_D(x1, xZR, rex.w ? 63 : 31);
             SUB_D(gd, x1, gd);
-            MARK2;
             if (BOX64DRENV(dynarec_safeflags)) {
                 IFX (X_PF) emit_pf(dyn, ninst, gd, x2, x5);
             }
+            MARK2;
             SPILL_EFLAGS();
             break;
         case 0xBE:
@@ -2035,8 +2096,8 @@ uintptr_t dynarec64_0F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             GETED(0);
             if (ed != gd) MV(x7, ed);
             emit_add32(dyn, ninst, rex, ed, gd, x4, x5, x6);
-            if (ed != gd) MVxw(gd, x7);
             WBACK;
+            if (ed != gd) MVxw(gd, x7);
             break;
         case 0xC2:
             INST_NAME("CMPPS Gx, Ex, Ib");

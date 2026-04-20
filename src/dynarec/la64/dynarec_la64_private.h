@@ -43,9 +43,8 @@ typedef union sse_cache_s {
 typedef union avx_cache_s {
     int8_t v;
     struct {
-        uint8_t reg : 5;
-        uint8_t width : 1;
-        uint8_t zero_upper : 1;        
+        uint8_t reg : 6;
+        uint8_t dirty : 1;
         uint8_t write : 1;
     };
 } avx_cache_t;
@@ -111,7 +110,9 @@ typedef struct instruction_la64_s {
     uint8_t             will_read:1;     // [strongmem] will read from memory
     uint8_t             last_write:1;    // [strongmem] the last write in a SEQ
     uint8_t             lock:1;          // [strongmem] lock semantic
-    uint8_t             df_notneeded;
+    uint8_t             df_needed:1;
+    uint8_t             df_notneeded:1;
+    uint8_t             sep:1;           // opcode is a secondary entry point
     uint8_t             nat_flags_fusion:1;
     uint8_t             nat_flags_nofusion:1;
     uint8_t             nat_flags_carry:1;
@@ -177,6 +178,7 @@ typedef struct dynarec_la64_s {
     uint8_t              use_mmx:1;
     uint8_t              use_xmm:1;
     uint8_t              use_ymm:1;
+    uint8_t              is_file_mapped:1;
     void*                gdbjit_block;
     uint32_t             need_x87check; // x87 low precision check
     uint32_t             need_dump;     // need to dump the block

@@ -182,6 +182,15 @@ Optimize CALL/RET opcodes. Available in WowBox64.
  * 2 : Try to optimize CALL/RET, skipping the jump table when possible, adding code to handle return to dirty/modified block. Does not work on WowBox64. 
 
 
+=item B<BOX64_DYNAREC_SEP> =I<0|1|2>
+
+Optimize CALL/RET further with Secondary Entry Points (SEP). Have no effect is CALLRET is not enabled Available in WowBox64.
+
+ * 0 : Do not add SEP at CALLRET return 
+ * 1 : Add SEP at CALLRET return, on meory that are from known binary files [Default]
+ * 2 : Add SEP at CALLRET return for all type of memory. 
+
+
 =item B<BOX64_DYNAREC_DF> =I<0|1>
 
 Enable or disable the use of deferred flags. Available in WowBox64.
@@ -355,7 +364,7 @@ Behaviour of flags emulation on CALL/RET opcodes and other edge cases. Available
  * 2 : All CALL/RET will need flags. All edge cases are also handled. 
 
 
-=item B<BOX64_DYNAREC_STRONGMEM> =I<0|1|2|3>
+=item B<BOX64_DYNAREC_STRONGMEM> =I<0|1|2|3|4>
 
 Enable the emulation of x86 strong memory model. Available in WowBox64.
 
@@ -363,6 +372,7 @@ Enable the emulation of x86 strong memory model. Available in WowBox64.
  * 1 : Enable some memory barriers when writing to memory to emulate the x86 strong memory model in a limited way. 
  * 2 : All in 1, plus memory barriers on SIMD instructions. 
  * 3 : All in 2, plus more memory barriers on a regular basis. 
+ * 4 : Mimic x86 TSO similarly to QEMU's approach, for evaluation purposes. 
 
 
 =item B<BOX64_DYNAREC_TBB> =I<0|1>
@@ -508,6 +518,14 @@ Fix 64bit inodes.
 
  * 0 : Do not fix 64bit inodes. [Default]
  * 1 : Fix 64bit inodes. 
+
+
+=item B<BOX64_FORCE_LD_PRELOAD> =I<0|1>
+
+Force symbols from BOX64_LD_PRELOAD libraries to be resolved by RTLD_NEXT.
+
+ * 0 : Do nothing. [Default]
+ * 1 : Force symbols from BOX64_LD_PRELOAD libraries to be resolved by RTLD_NEXT. 
 
 
 =item B<BOX64_IGNOREINT3> =I<0|1>
@@ -713,6 +731,14 @@ Do not load Vulkan libraries.
  * 1 : Do not load Vulkan libraries, both native and x86_64. 
 
 
+=item B<BOX64_NOVULKANOVERLAY> =I<0|1>
+
+Do not load x64 Vulkan overlay.
+
+ * 0 : Do try to Load x64 Vulkan overlay. [Default]
+ * 1 : Do not load x64 Vulkan overlay. 
+
+
 =item B<BOX64_PATH> =I<XXXX>
 
 Path to look for x86_64 binaries.
@@ -775,6 +801,14 @@ Use hardware counter for rdtsc if available.
 
  * 0 : Use hardware counter for rdtsc opcode if available. [Default]
  * 1 : Use hardware counter for rdtsc if and only if precision is at least 1GHz. 
+
+
+=item B<BOX64_RDTSC_INV> =I<0|1>
+
+Report Invariant TSC bit in CPUID for Intel CPU type.
+
+ * 0 : Do not report Invariant TSC for Intel CPU type (default). [Default]
+ * 1 : Report Invariant TSC bit in CPUID leaf 0x80000007 for Intel CPU type. 
 
 
 =item B<BOX64_RESERVE_HIGH> =I<0|1>

@@ -399,8 +399,6 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                         return 1;
                     }
                 }
-                if(!(prot&PROT_WRITE) && (paddr==(paddr&~(box64_pagesize-1)) && (asize==ALIGN(asize))))
-                    mprotect((void*)paddr, asize, prot);
             }
 #ifdef DYNAREC
             if(BOX64ENV(dynarec) && (e->p_flags & PF_X)) {
@@ -428,14 +426,26 @@ int AllocLoadElfMemory(box64context_t* context, elfheader_t* head, int mainbin)
                 memset(dest+e->p_filesz, 0, e->p_memsz - e->p_filesz);
         }
     }
+    // deferred mprotect: apply final protections after all segments are loaded
+    // this avoids the case where mprotect on a shared host page (e.g. 64KB) strips
+    // PROT_WRITE before a later segment that shares the same page has been read into memory
+    for (int j = 0; j < n; j++) {
+        if(!(head->multiblocks[j].flags & PF_W)) {
+            uintptr_t start = head->multiblocks[j].paddr & ~(box64_pagesize-1);
+            uintptr_t end = ALIGN(head->multiblocks[j].paddr + head->multiblocks[j].asize);
+            for(uintptr_t page = start; page < end; page += box64_pagesize) {
+                uint32_t prot = getProtection(page);
+                if(prot && !(prot & PROT_WRITE))
+                    mprotect((void*)page, box64_pagesize, prot & ~PROT_CUSTOM);
+            }
+        }
+    }
     // record map
     RecordEnvMappings((uintptr_t)head->image, head->memsz, head->fileno);
     // can close the elf file now!
     fclose(head->file);
     head->file = NULL;
     head->fileno = -1;
-
-    PatchLoadedDynamicSection(head);
 
     return 0;
 }
@@ -1028,12 +1038,27 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
     if(h->needed)   // already done
         return 0;
     DumpDynamicRPath(h);
+    path_collection_t* rpathlist = NULL;
     // update RPATH first
     for (size_t i=0; i<h->numDynamic; ++i) {
         int tag = box64_is32bits?h->Dynamic._32[i].d_tag:h->Dynamic._64[i].d_tag;
         if(tag==DT_RPATH || tag==DT_RUNPATH) {
             char *rpathref = h->DynStrTab+h->delta+(box64_is32bits?h->Dynamic._32[i].d_un.d_val:h->Dynamic._64[i].d_un.d_val);
             char* rpath = rpathref;
+            while(strstr(rpath, "$$ORIGIN")) {
+                char* origin = box_strdup(h->path);
+                char* p = strrchr(origin, '/');
+                if(p) *p = '\0';    // remove file name to have only full path, without last '/'
+                char* tmp = (char*)box_calloc(1, strlen(rpath)-strlen("$$ORIGIN")+strlen(origin)+1);
+                p = strstr(rpath, "$$ORIGIN");
+                memcpy(tmp, rpath, p-rpath);
+                strcat(tmp, origin);
+                strcat(tmp, p+strlen("$$ORIGIN"));
+                if(rpath!=rpathref)
+                    box_free(rpath);
+                rpath = tmp;
+                box_free(origin);
+            }
             while(strstr(rpath, "$ORIGIN")) {
                 char* origin = box_strdup(h->path);
                 char* p = strrchr(origin, '/');
@@ -1061,6 +1086,19 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
                     box_free(rpath);
                 rpath = tmp;
                 box_free(origin);
+                if(!FileExist(rpath, 0) && strstr(rpath, "/../../")) {
+                    tmp = (char*)box_calloc(1, strlen(rpath)+1);
+                    strcpy(tmp, rpath);
+                    // check if one "/.." could be removed for the folder to exist
+                    char* p = strstr(tmp, "/../../");
+                    memmove(p, p+3, strlen(p+3)+1);
+                    if(FileExist(tmp, 0)) {
+                        if(rpath!=rpathref)
+                            box_free(rpath);
+                        rpath = tmp;
+                    } else
+                        box_free(tmp);
+                }
             }
             while(strstr(rpath, "${PLATFORM}")) {
                 char* platform = box_strdup("x86_64");
@@ -1080,7 +1118,13 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
                 printf_log(LOG_INFO, "Warning, RPATH with $ variable not supported yet (%s)\n", rpath);
             } else {
                 printf_log(LOG_DEBUG, "Prepending path \"%s\" to BOX64_LD_LIBRARY_PATH\n", rpath);
-                PrependList(&box64->box64_ld_lib, rpath, 1);
+                if(h == box64->elfs[0])
+                    PrependList(&box64->box64_ld_lib, rpath, 1);
+                else {
+                    if(!rpathlist)
+                        rpathlist = box_calloc(1, sizeof(path_collection_t));
+                    PrependList(rpathlist, rpath, 1);
+                }
             }
             if(rpath!=rpathref)
                 box_free(rpath);
@@ -1101,6 +1145,7 @@ int LoadNeededLibs(elfheader_t* h, lib_t *maplib, int local, int bindnow, int de
         ++cnt;
     #endif
     h->needed = new_neededlib(cnt);
+    h->needed->rpath = rpathlist;
     if(h == my_context->elfs[0])
         my_context->neededlibs = h->needed;
     int j=0;
@@ -1178,6 +1223,9 @@ void RunElfInit(elfheader_t* h, x64emu_t *emu)
 {
     if(!h || h->init_done)
         return;
+    // adjust elf Dynamic section header with the delta of the load address if needed
+    // but do not adjust if there is no libs loaded as it will use it's own loader to do similar stuffs
+    if(!box64_nolibs) PatchLoadedDynamicSection(h);
     // reset Segs Cache
     uintptr_t p = h->initentry + h->delta;
     // Refresh no-file part of TLS in case default value changed
@@ -1520,7 +1568,7 @@ void* GetLoadedDynamicSection(elfheader_t* h)
     return NULL;
 }
 
-static int isDynamicTagPointer(int tag)
+int isDynamicTagPointer(int tag)
 {
     switch(tag) {
         case DT_PLTGOT:

@@ -1516,12 +1516,15 @@ int sse_get_reg(dynarec_arm_t* dyn, int ninst, int s1, int a, int forwrite)
 // get neon register for a SSE reg, but don't try to synch it if it needed to be created
 int sse_get_reg_empty(dynarec_arm_t* dyn, int ninst, int s1, int a)
 {
-    dyn->n.xmm_used |= 1<<a;
     if(dyn->n.ssecache[a].v!=-1) {
         dyn->n.ssecache[a].write = 1;
         dyn->n.neoncache[dyn->n.ssecache[a].reg].t = NEON_CACHE_XMMW;
+        if(!(dyn->n.xmm_used&(1<<a)))   // if it's not used in this opcode, then it's not needed from there
+            dyn->n.xmm_unneeded |= 1<<a;
+        dyn->n.xmm_used |= 1<<a;
         return dyn->n.ssecache[a].reg;
     }
+    dyn->n.xmm_used |= 1<<a;
     dyn->n.xmm_unneeded |= 1<<a;
     dyn->n.ssecache[a].reg = fpu_get_reg_xmm(dyn, NEON_CACHE_XMMW, a);
     dyn->n.ssecache[a].write = 1; // it will be write...
@@ -1729,6 +1732,8 @@ int ymm_get_reg_empty(dynarec_arm_t* dyn, int ninst, int s1, int a, int k1, int 
         if((dyn->n.neoncache[i].t==NEON_CACHE_YMMR || dyn->n.neoncache[i].t==NEON_CACHE_YMMW) && dyn->n.neoncache[i].n==a) {
             dyn->n.neoncache[i].t = NEON_CACHE_YMMW;
             dyn->ymm_zero&=~(1<<a);
+            if(!(dyn->n.ymm_used&(1<<a)))
+                dyn->n.ymm_unneeded |= 1<<a;
             dyn->n.ymm_used|=(1<<a);
             #if STEP == 0
             dyn->insts[ninst].ymm0_sub |= (1<<a);
@@ -1737,6 +1742,7 @@ int ymm_get_reg_empty(dynarec_arm_t* dyn, int ninst, int s1, int a, int k1, int 
         }
     // nope, grab a new one
     dyn->n.ymm_unneeded |= 1<<a;
+    dyn->n.ymm_used|=(1<<a);
     int ret =  fpu_get_reg_ymm(dyn, ninst, NEON_CACHE_YMMW, a, k1, k2, k3);
     if(dyn->ymm_zero&(1<<a))
         dyn->ymm_zero&=~(1<<a);
@@ -2315,7 +2321,7 @@ static void nativeFlagsTransform(dynarec_arm_t* dyn, int ninst, int s1, int s2)
         flags_after = dyn->insts[jmp].before_nat_flags;
         nc_after = dyn->insts[jmp].normal_carry_before;
     }
-    uint8_t flags_x86 = flag2native(dyn->insts[jmp].x64.need_before);
+    uint8_t flags_x86 = flag2native(dyn->insts[jmp].x64.need_before, (dyn->insts[jmp].before_nat_flags&NF_PF_V)?1:0);
     flags_x86 &= ~flags_after;
     MESSAGE(LOG_DUMP, "\tNative Flags transform ---- ninst=%d -> %d %hhx -> %hhx/%hhx\n", ninst, jmp, flags_before, flags_after, flags_x86);
     // flags present in before and missing in after
@@ -2330,6 +2336,10 @@ static void nativeFlagsTransform(dynarec_arm_t* dyn, int ninst, int s1, int s2)
     if((flags_before&NF_VF) && (flags_x86&NF_VF)) {
         CSETw(s1, cVS);
         BFIw(xFlags, s1, F_OF, 1);
+    }
+    if((flags_before&NF_PF_V) && (flags_x86&NF_PF_V)) {
+        CSETw(s1, cVS);
+        BFIw(xFlags, s1, F_PF, 1);
     }
     if((flags_before&NF_CF) && (flags_x86&NF_CF)) {
         if(nc_before) // might need to invert carry
@@ -2354,6 +2364,11 @@ static void nativeFlagsTransform(dynarec_arm_t* dyn, int ninst, int s1, int s2)
     if(!(flags_before&NF_VF) && (flags_after&NF_VF)) {
         GO_MRS(s2);
         UBFXw(s1, xFlags, F_OF, 1);
+        BFIx(s2, s1, NZCV_V, 1);
+    }
+    if(!(flags_before&NF_PF_V) && (flags_after&NF_PF_V)) {
+        GO_MRS(s2);
+        UBFXw(s1, xFlags, F_PF, 1);
         BFIx(s2, s1, NZCV_V, 1);
     }
     if(!(flags_before&NF_CF) && (flags_after&NF_CF)) {
@@ -2385,6 +2400,47 @@ void CacheTransform(dynarec_arm_t* dyn, int ninst, int cacheupd) {
         fpuCacheTransform(dyn, ninst, x1, x2, x3);
     if(cacheupd&4)
         nativeFlagsTransform(dyn, ninst, x1, x2);
+}
+
+void additionnal_checks(dynarec_arm_t* dyn, int ninst)
+{
+    int s1 = x1;
+    // check if a opcode generate partial flags that may clober existing native flags and see need to be "moved" to xFlags
+    if(dyn->insts[ninst].nat_flags_op || dyn->insts[ninst].nat_flags_op_before) {
+        uint8_t nat_flags = dyn->insts[ninst].need_nat_flags; // that's the native flags that will be generated
+        uint8_t nat_flags_gen = dyn->insts[ninst].set_nat_flags;
+        //TODO: does it need to fetch previous state with getPred?
+        uint8_t nat_flags_before = dyn->insts[ninst].before_nat_flags; //flags before the opcode, but it's only there when opcode also consume natflags
+        uint8_t nat_flags_flush = nat_flags_before&~nat_flags_gen;  // flags present before bu not after the operation and so that needs to be spared
+        if(nat_flags_before && nat_flags_flush) {
+            // some flags disapear, and need to be saved
+            MESSAGE(LOG_DUMP, "\tPurging native flags %hhx\n", nat_flags_flush);
+            uint8_t nc_before = dyn->insts[ninst].normal_carry;
+            if(nat_flags_flush&NF_EQ) {
+                CSETw(s1, cEQ);
+                BFIw(xFlags, s1, F_ZF, 1);
+            }
+            if(nat_flags_flush&NF_SF) {
+                CSETw(s1, cMI);
+                BFIw(xFlags, s1, F_SF, 1);
+            }
+            if(nat_flags_flush&NF_VF) {
+                CSETw(s1, cVS);
+                BFIw(xFlags, s1, F_OF, 1);
+            }
+            if(nat_flags_flush&NF_PF_V) {
+                CSETw(s1, cVS);
+                BFIw(xFlags, s1, F_PF, 1);
+            }
+            if(nat_flags_flush&NF_CF) {
+                if(nc_before) // might need to invert carry
+                    CSETw(s1, cCS);
+                else
+                    CSETw(s1, cCC);
+                BFIw(xFlags, s1, F_CF, 1);
+            }
+        }
+    }
 }
 
 void fpu_reflectcache(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3)
@@ -2619,8 +2675,10 @@ int fpu_get_reg_ymm(dynarec_arm_t* dyn, int ninst, int t, int ymm, int k1, int k
             return i;
         }
         // check if free or should be purge before...
-        if(dyn->n.neoncache[i].t==NEON_CACHE_YMMW)
+        if(dyn->n.neoncache[i].t==NEON_CACHE_YMMW) {
+            dyn->n.ymm_used|=(1<<dyn->n.neoncache[i].n);    // mark as used, to avoid it being mark as unneeded
             VSTR128_U12(i, xEmu, offsetof(x64emu_t, ymm[dyn->n.neoncache[i].n]));
+        }
         dyn->n.neoncache[i].t=t;
         dyn->n.neoncache[i].n=ymm;
         return i;
@@ -2666,6 +2724,7 @@ int fpu_get_reg_ymm(dynarec_arm_t* dyn, int ninst, int t, int ymm, int k1, int k
             // should a test be done to check if ymm is already in the purge list?
             if(!is_ymm_to_keep(dyn, i+j, k1, k2, k3)) {
                 // Save the reg and recycle it
+                dyn->n.ymm_used|=(1<<dyn->n.neoncache[i+j].n);
                 VSTR128_U12(i+j, xEmu, offsetof(x64emu_t, ymm[dyn->n.neoncache[i+j].n]));
                 dyn->n.neoncache[i+j].v = 0;
                 int ret = internal_mark_ymm(dyn, t, ymm, i+j);
@@ -2678,6 +2737,7 @@ int fpu_get_reg_ymm(dynarec_arm_t* dyn, int ninst, int t, int ymm, int k1, int k
         if(!dyn->n.fpuused[i+j]) {
             // should a test be done to check if ymm is already in the purge list?
             if((dyn->n.neoncache[i+j].t==NEON_CACHE_YMMW) && !is_ymm_to_keep(dyn, i+j, k1, k2, k3)) {
+                dyn->n.ymm_used|=(1<<dyn->n.neoncache[i+j].n);
                 VSTR128_U12(i+j, xEmu, offsetof(x64emu_t, ymm[dyn->n.neoncache[i+j].n]));
                 dyn->n.neoncache[i+j].v = 0;
                 int ret = internal_mark_ymm(dyn, t, ymm, i+j);
@@ -2776,4 +2836,98 @@ void doLeaveBlock(dynarec_arm_t* dyn, int ninst, int s1, int s2, int s3)
         CBNZw(s3, -3*4);
     }
     MESSAGE(LOG_INFO, "-------- doLeave\n");
+}
+
+void emit_fcomi(dynarec_arm_t* dyn, int ninst, int s1, int s2, int isfloat, int d1, int d2)
+{
+    IFX(X_OF|X_AF|X_SF) {
+        MOV32w(s2, 0b100011010101);
+        BICw_REG(xFlags, xFlags, s2);
+    }
+    IFX(X_CF|X_PF|X_ZF) {
+        int nonative = 0;
+        int needCZ = 0;
+        if(isfloat)
+            FCMPS(d1, d2);
+        else
+            FCMPD(d1, d2);
+        IFX(X_ZF) {
+            IFNATIVE(NF_EQ) {
+                // add ZF if VS is set
+                needCZ = 1;
+            } else {
+                nonative = 1;
+            }
+        }
+        IFX(X_CF) {
+            IFNATIVE(NF_CF) {
+                // no need to add CF if VS, because it's a reverse carry (so already "un"set)
+                GEN_INVERTED_CARRY();
+                needCZ = 1;
+            } else {
+                nonative = 1;
+            }
+        }
+        IFX(X_PF) {
+            IFNATIVE(NF_PF_V) {
+            } else {
+                nonative = 1;
+            }
+        }
+        if(needCZ) {
+            #if 1
+            // retest is VF is clear, set NZCV to 0101 if VF is set, to match x86 behaviour (also, inversed Carry)
+            // probably faster like that then the conditionnal jump + reading / reseting the flags
+            if(isfloat)
+                FCCMPS(d1, d2, 0b0101, cVC);
+            else
+                FCCMPD(d1, d2, 0b0101, cVC);
+            #else
+            if(cpuext.flagm) {
+                Bcond(cVC, 4+2*4);
+                MOV32w(s1, 0b0100); //new flags
+                RMIF(s1, 0, 0b0110);    // ZC flags only
+            } else {
+                Bcond(cVC, 4+3*4);
+                MRS_nzcv(s1);
+                EORx_mask(s1, s1, 1, 0b100011, 0b000001);  // mask = (1<<NZCV_Z)|(1<<NZCV_C) == 0x60000000
+                MSR_nzcv(s1);
+            }
+            #endif
+        }
+        if(nonative) {
+            MOV32w(s2, 0b01000101);
+            IFX(X_OF|X_AF|X_SF) {} else {BICw_REG(xFlags, xFlags, s2);}
+            CSETw(s1, cMI); /* 1 if less than, 0 else */
+            /*s2 already set */     /* unordered */
+            CSELw(s1, s2, s1, cVS);
+            MOV32w(s2, 0b01000000); /* zero */
+            CSELw(s1, s2, s1, cEQ);
+            /* greater than leave 0 */
+            ORRw_REG(xFlags, xFlags, s1);
+        }
+    }
+    SET_DFNONE();
+}
+
+void checkCRC(dynarec_arm_t* dyn, int ninst)
+{
+    // grab the dynablock address in x5, as this on will not be erased by crc functions
+    int delta = -(dyn->native_size + sizeof(void*));
+    LDRx_literal(x5, delta);
+    // move away xEMU to X6, should be safe there
+    MOVx_REG(x6, xEmu);
+    // prepare and call the crc function
+    TABLE64C(x3, cpuext.crc32?const_native_crc32:const_native_x31);
+    LDRx_U12(xEmu, x5, offsetof(dynablock_t, x64_addr));
+    LDRw_U12(x1, x5, offsetof(dynablock_t, x64_size));
+    BLR(x3);
+    // done, move away result and restore xEmu
+    MOVw_REG(x1, xEmu);
+    MOVx_REG(xEmu, x6);
+    LDRw_U12(x2, x5, offsetof(dynablock_t, hash));
+    SUBw_REG(x1, x1, x2);
+    CBZw(x1, 4+2*4);
+    TABLE64C(x3, const_native_next_invalidate);
+    BLR(x3);
 }

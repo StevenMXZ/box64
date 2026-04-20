@@ -979,16 +979,37 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 *ok = 0;
             }
             break;
-        case 0x63:
-            if(rex.is32bits) {
-                // ARPL here
-                DEFAULT;
-            } else {
-                INST_NAME("MOVSXD Gd, Ed");
-                nextop = F8;
-                GETGD;
-                if(rex.w) {
-                    if(MODREG) {   // reg <= reg
+	    case 0x63:
+	        if(rex.is32bits) {
+	            // ARPL r/m16, r16
+	            // If dst.RPL < src.RPL then dst.RPL = src.RPL and ZF=1, else ZF=0.
+	            // Only ZF is modified.
+	            INST_NAME("ARPL Ew, Gw");
+	            nextop = F8;
+	            SETFLAGS(X_ZF, SF_SUBSET);
+	            SET_DFNONE();
+	            GETEW(x1, 0);
+	            GETGW(x2);
+	            // Extract RPL (low 2 bits)
+	            UBFXw(x6, ed, 0, 2);
+	            UBFXw(x4, gd, 0, 2);
+	            // need_update = (dst_rpl < src_rpl)
+	            CMPSw_REG(x6, x4);
+	            CSETw(x5, cLT);
+	            // ZF = need_update
+	            BFIw(xFlags, x5, F_ZF, 1);
+	            // If no update needed then skip the writeback.
+	            CBZw_MARK(x5);
+	            // Update dest selector's low 2 bits.
+	            BFXILw(ed, gd, 0, 2);
+	            EWBACK;
+	            MARK;
+	        } else {
+	            INST_NAME("MOVSXD Gd, Ed");
+	            nextop = F8;
+	            GETGD;
+	            if(rex.w) {
+	                if(MODREG) {   // reg <= reg
                         SXTWx(gd, TO_NAT((nextop & 7) + (rex.b << 3)));
                     } else {                    // mem <= reg
                         SMREAD();
@@ -2915,6 +2936,8 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                     LDRx_REG(x3, x1, x2);
                     //LDRx_U12(x3, x1, offsetof(box64context_t, signals[X64_SIGTRAP]));
                     CMPSx_U12(x3, 0);
+                    // commit df before branch, CALL_S in int3 path has FORCE_DFNONE
+                    CHECK_DFNONE(0);
                     B_MARK(cEQ);
                     GETIP(addr);  // update RIP
                     STORE_XEMU_CALL(xRIP);
@@ -3705,7 +3728,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
             i32 = (rex.is32bits && rex.is66)?F16S:F32S;
             if(addr+i32==0) {
                 #if STEP == 3
-                printf_log(LOG_INFO, "Warning, CALL to 0x0 at %p (%p)\n", (void*)addr, (void*)(addr-1));
+                printf_log(LOG_DEBUG, "Warning, CALL to 0x0 at %p (%p)\n", (void*)addr, (void*)(addr-1));
                 #endif
             }
             #if STEP < 2
@@ -3802,17 +3825,14 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                         // Push actual return address
                         if(addr < (dyn->start+dyn->isize)) {
                             // there is a next...
-                            if(BOX64DRENV(dynarec_callret)>1)
+                            if(BOX64DRENV(dynarec_callret)>1 && !dyn->always_test)
                                 j64 = CALLRET_GETRET();
                             else
                                 j64 = (dyn->insts)?(dyn->insts[ninst].epilog-(dyn->native_size)):0;
                             ADR_S20(x4, j64);
                             MESSAGE(LOG_NONE, "\tCALLRET set return to +%di\n", j64>>2);
                         } else {
-                            if(BOX64DRENV(dynarec_callret)>1)
-                                j64 = CALLRET_GETRET();
-                            else
-                                j64 = (dyn->insts)?(GETMARK-(dyn->native_size)):0;
+                            j64 = (dyn->insts)?(GETMARK-(dyn->native_size)):0;
                             ADR_S20(x4, j64);
                             MESSAGE(LOG_NONE, "\tCALLRET set return to +%di\n", j64>>2);
                         }
@@ -3995,7 +4015,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                 case 3:
                     INST_NAME("NEG Eb");
                     SETFLAGS(X_ALL, SF_SET_PENDING);
-                    GETSEB(x1, 0);
+                    GETEB(x1, 0);
                     emit_neg8(dyn, ninst, x1, x2, x4);
                     EBBACK;
                     break;
@@ -4513,7 +4533,7 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                         // Push actual return address
                         if(addr < (dyn->start+dyn->isize)) {
                             // there is a next...
-                            if(BOX64DRENV(dynarec_callret)>1)
+                            if(BOX64DRENV(dynarec_callret)>1 && !dyn->always_test)
                                 j64 = CALLRET_GETRET();
                             else
                                 j64 = (dyn->insts)?(dyn->insts[ninst].epilog-(dyn->native_size)):0;
@@ -4568,14 +4588,17 @@ uintptr_t dynarec64_00(dynarec_arm_t* dyn, uintptr_t addr, uintptr_t ip, int nin
                             // Push actual return address. Note that CS will not be tested, but that should be ok?
                             if(can_continue) {
                                 // there is a next...
-                                if(BOX64DRENV(dynarec_callret)>1)
+                                if(BOX64DRENV(dynarec_callret)>1 && !dyn->always_test)
                                     j64 = CALLRET_GETRET();
                                 else
                                     j64 = (dyn->insts)?(dyn->insts[ninst].epilog-(dyn->native_size)):0;
                                 ADR_S20(x4, j64);
                                 MESSAGE(LOG_NONE, "\tCALLRET set return to +%di\n", j64>>2);
                             } else {
-                                j64 = (dyn->insts)?(GETMARK-(dyn->native_size)):0;
+                                if(BOX64DRENV(dynarec_callret)>1 && !dyn->always_test)
+                                    j64 = CALLRET_GETRET();
+                                else
+                                    j64 = (dyn->insts)?(GETMARK-(dyn->native_size)):0;
                                 ADR_S20(x4, j64);
                                 MESSAGE(LOG_NONE, "\tCALLRET set return to +%di\n", j64>>2);
                             }

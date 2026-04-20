@@ -434,6 +434,8 @@ static void addLibPaths(box64context_t* context)
     GO("libicui18n.so.66");
     GO("libicuuc.so.67");
     GO("libicui18n.so.67");
+    GO("libicuuc.so.68");
+    GO("libicui18n.so.68");
     GO("libicuuc.so.72");
     GO("libicui18n.so.72");
     GO("libicuuc.so.73");
@@ -444,6 +446,7 @@ static void addLibPaths(box64context_t* context)
     GO("libicui18n.so.75");
     GO("libicuuc.so.76");
     GO("libicui18n.so.76");
+    GO("libSDL3.so.0");
     #undef GO
 
     if(BOX64ENV(nosigsegv)) {
@@ -494,6 +497,8 @@ void LoadLDPath(box64context_t *context)
             AddPath("/usr/lib/i386-linux-gnu", &context->box64_ld_lib, 1);
         if(FileExist("/usr/i386-linux-gnu/lib", 0))
             AddPath("/usr/i386-linux-gnu/lib", &context->box64_ld_lib, 1);
+        if(FileExist("/usr/i686-linux-gnu/lib", 0))
+            AddPath("/usr/i686-linux-gnu/lib", &context->box64_ld_lib, 1);
         if(FileExist("/usr/lib/box64-i386-linux-gnu", 0))
             AddPath("/usr/lib/box64-i386-linux-gnu", &context->box64_ld_lib, 1);
         if(FileExist("/opt/box64/lib32", 0))
@@ -665,6 +670,8 @@ void setupTrace()
 void endMallocHook();
 #endif
 
+void finiPendingDLOpenedNoUnload(x64emu_t* emu);
+
 void endBox64()
 {
     if(!my_context || box64_quit)
@@ -684,9 +691,30 @@ void endBox64()
     //void closeAllDLOpened();
     //closeAllDLOpened();    // close residual dlopened libs. Disabled, seems like a bad idea, better to unload with proper dependancies
     RunElfFini(my_context->elfs[0], emu);
+    printf_log(LOG_DEBUG, "Finished calling fini for dlopened libs\n");
+    finiPendingDLOpenedNoUnload(emu);   // call fini for dlopened libs, but don't unload them, as they might be needed by the main elf fini
     // unload needed libs
     needed_libs_t* needed = my_context->elfs[0]->needed;
     printf_log(LOG_DEBUG, "Unloaded main elf: Will Dec RefCount of %d libs\n", needed?needed->size:0);
+    int workers = get_active_emu_workers();
+    if (workers > 0) {
+        const int sleep_us = 10000;   // 10ms
+        const int max_wait_ms = 2000; // 2s
+        int waited_ms = 0;
+
+        printf_log(LOG_INFO, "endBox64: waiting emu workers to exit (n=%d)\n", workers);
+        while ((workers = get_active_emu_workers()) > 0 && waited_ms < max_wait_ms) {
+            usleep(sleep_us);
+            waited_ms += sleep_us / 1000;
+        }
+
+        if (workers > 0) {
+            printf_log(LOG_INFO,
+                "endBox64: %d emu workers still alive after %dms, skip unload/free to avoid UAF crash\n",
+                workers, waited_ms);
+            return;
+        }
+    }
     if(needed)
         for(int i=0; i<needed->size; ++i)
             DecRefCount(&needed->libs[i], emu);
@@ -747,6 +775,7 @@ int initialize(int argc, const char **argv, char** env, x64emu_t** emulator, elf
     init_malloc_hook();
 #endif
     init_auxval(argc, argv, environ?environ:env);
+    ftrace = stderr;    // init early: BOX64_VERSION path below uses PrintfFtrace
     // analogue to QEMU_VERSION in qemu-user-mode emulation
     if(getenv("BOX64_VERSION")) {
         PrintBox64Version(0);
@@ -769,7 +798,14 @@ int initialize(int argc, const char **argv, char** env, x64emu_t** emulator, elf
         exit(0);
     }
 
-    if (argc >= 3 && (!strcmp(argv[1], "--test") || !strcmp(argv[1], "-t"))) {
+    int is_test = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--test") || !strcmp(argv[i], "-t")) {
+            is_test = 1;
+            break;
+        }
+    }
+    if (is_test) {
         box64_unittest_mode = 1;
         exit(unittest(argc, argv));
     }

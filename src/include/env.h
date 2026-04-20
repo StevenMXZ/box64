@@ -52,9 +52,9 @@ extern char* ftrace_name;
     INTEGER(BOX64_DYNAREC_BIGBLOCK, dynarec_bigblock, 2, 0, 3, 1)             \
     BOOLEAN(BOX64_DYNAREC_BLEEDING_EDGE, dynarec_bleeding_edge, 1, 0)         \
     INTEGER(BOX64_DYNAREC_CALLRET, dynarec_callret, 0, 0, 2, 1)               \
+    INTEGER(BOX64_DYNAREC_SEP, dynarec_sep, 1, 0, 2, 1)                       \
     BOOLEAN(BOX64_DYNAREC_DF, dynarec_df, 1, 1)                               \
     INTEGER(BOX64_DYNAREC_DIRTY, dynarec_dirty, 0, 0, 2, 0)                   \
-    BOOLEAN(BOX64_DYNAREC_HOTPAGE_ALT, dynarec_hotpage_alt, 1, 0)             \
     BOOLEAN(BOX64_DYNAREC_NOHOTPAGE, dynarec_nohotpage, 0, 0)                 \
     BOOLEAN(BOX64_DYNAREC_DIV0, dynarec_div0, 0, 1)                           \
     INTEGER(BOX64_DYNAREC_DUMP, dynarec_dump, 0, 0, 2, 1)                     \
@@ -70,7 +70,7 @@ extern char* ftrace_name;
     INTEGER(BOX64_DYNAREC_PAUSE, dynarec_pause, 0, 0, 3, 1)                   \
     BOOLEAN(BOX64_DYNAREC_PERFMAP, dynarec_perf_map, 0, 0)                    \
     INTEGER(BOX64_DYNAREC_SAFEFLAGS, dynarec_safeflags, 1, 0, 2, 1)           \
-    INTEGER(BOX64_DYNAREC_STRONGMEM, dynarec_strongmem, 0, 0, 3, 1)           \
+    INTEGER(BOX64_DYNAREC_STRONGMEM, dynarec_strongmem, 0, 0, 4, 1)           \
     BOOLEAN(BOX64_DYNAREC_TBB, dynarec_tbb, 1, 0)                             \
     STRING(BOX64_DYNAREC_TEST, dynarec_test_str, 1)                           \
     BOOLEAN(BOX64_DYNAREC_TEST_NODUP, dynarec_test_nodup, 0, 1)               \
@@ -94,6 +94,7 @@ extern char* ftrace_name;
     STRING(BOX64_ENV5, env5, 0)                                               \
     BOOLEAN(BOX64_EXIT, exit, 0, 0)                                           \
     BOOLEAN(BOX64_FIX_64BIT_INODES, fix_64bit_inodes, 0, 0)                   \
+    BOOLEAN(BOX64_FORCE_LD_PRELOAD, force_ld_preload, 0, 0)                   \
     BOOLEAN(BOX64_IGNOREINT3, ignoreint3, 0, 0)                               \
     STRING(BOX64_INSERT_ARGS, insert_args, 0)                                 \
     BOOLEAN(BOX64_INPROCESSGPU, inprocessgpu, 0, 0)                           \
@@ -123,6 +124,7 @@ extern char* ftrace_name;
     STRING(BOX64_PROFILE, profile, 1)                                         \
     STRING(BOX64_RCFILE, envfile, 0)                                          \
     BOOLEAN(BOX64_RDTSC_1GHZ, rdtsc_1ghz, 0, 0)                               \
+    BOOLEAN(BOX64_RDTSC_INV, rdtsc_inv, 0, 1)                                 \
     BOOLEAN(BOX64_RESERVE_HIGH, reserve_high, 0, 0)                           \
     INTEGER(BOX64_ROLLING_LOG, cycle_log, 0, 0, 2048, 0)                      \
     BOOLEAN(BOX64_SDL2_JGUID, sdl2_jguid, 0, 0)                               \
@@ -148,6 +150,7 @@ extern char* ftrace_name;
     BOOLEAN(BOX64_X11THREADS, x11threads, 0, 0)                               \
     BOOLEAN(BOX64_X87_NO80BITS, x87_no80bits, 0, 1)                           \
     BOOLEAN(BOX64_NOPERSONA32BITS, nopersona32bits, 0, 0)                     \
+    BOOLEAN(BOX64_NOVULKANOVERLAY, novulkanoverlay, 0, 0)                     \
     INTEGER(BOX64_DYNACACHE, dynacache, 2, 0, 2, 0)                           \
     STRING(BOX64_DYNACACHE_FOLDER, dynacache_folder, 0)                       \
     INTEGER(BOX64_DYNACACHE_MIN, dynacache_min, 350, 0, 10240, 0)
@@ -241,6 +244,7 @@ void WillRemoveMapping(uintptr_t addr, size_t length);
 void RemoveMapping(uintptr_t addr, size_t length);
 box64env_t* GetCurEnvByAddr(uintptr_t addr);
 int IsAddrFileMapped(uintptr_t addr, const char** filename, uintptr_t* start);
+int IsAddrFileMappedNoMemFD(uintptr_t addr);
 size_t SizeFileMapped(uintptr_t addr);
 mmaplist_t* GetMmaplistByAddr(uintptr_t addr);
 int IsAddrNeedReloc(uintptr_t addr);

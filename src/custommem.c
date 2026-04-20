@@ -1850,7 +1850,7 @@ void addDBFromAddressRange(uintptr_t addr, size_t size)
 int cleanDBFromAddressRange(uintptr_t addr, size_t size, int destroy)
 {
     uintptr_t start_addr = my_context?((addr<my_context->max_db_size)?0:(addr-my_context->max_db_size)):addr;
-    dynarec_log(LOG_DEBUG, "cleanDBFromAddressRange %p/%p -> %p %s\n", (void*)addr, (void*)start_addr, (void*)(addr+size-1), destroy?"destroy":"mark");
+    dynarec_log(LOG_DEBUG, "cleanDBFromAddressRange %p/%p -> %p %s\n", (void*)addr, (void*)start_addr, (void*)(addr+size-1), destroy?((destroy==2)?"invalidCRC":"destroy"):"mark");
     dynablock_t* db = NULL;
     uintptr_t end = addr+size;
     int ret = 0;
@@ -1858,10 +1858,12 @@ int cleanDBFromAddressRange(uintptr_t addr, size_t size, int destroy)
         start_addr = getDBSize(start_addr, end-start_addr, &db);
         if(db) {
             ret = 1;
-            if(destroy)
-                FreeRangeDynablock(db, addr, size);
-            else
-                MarkRangeDynablock(db, addr, size);
+            switch(destroy) {
+                case 0: MarkRangeDynablock(db, addr, size); break;
+                case 1: FreeRangeDynablock(db, addr, size); break;
+                case 2: MarkCRCRangeDynablock(db, addr, size); break;
+            }
+                
         }
     }
     return ret;
@@ -1985,9 +1987,9 @@ int addJumpTableIfDefault64(void* addr, void* jmp)
     idx0 = (((uintptr_t)addr)                )&JMPTABLE_MASK0;
 
     #ifdef JMPTABL_SHIFT4
-    return (native_lock_storeifref(create_jmptbl(0, idx0, idx1, idx2, idx3, idx4), jmp, native_next)==jmp)?1:0;
+    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3, idx4), jmp, native_next)==native_next)?1:0;
     #else
-    return (native_lock_storeifref(create_jmptbl(0, idx0, idx1, idx2, idx3), jmp, native_next)==jmp)?1:0;
+    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3), jmp, native_next)==native_next)?1:0;
     #endif
 }
 void setJumpTableDefault64(void* addr)
@@ -2033,9 +2035,9 @@ int setJumpTableDefaultIfRef64(void* addr, void* jmp)
         return 0;
     idx0 = (((uintptr_t)addr)    )&JMPTABLE_MASK0;
     #ifdef JMPTABL_SHIFT4
-    return (native_lock_storeifref(create_jmptbl(0, idx0, idx1, idx2, idx3, idx4), native_next, jmp)==native_next)?1:0;
+    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3, idx4), native_next, jmp)==jmp)?1:0;
     #else
-    return (native_lock_storeifref(create_jmptbl(0, idx0, idx1, idx2, idx3), native_next, jmp)==native_next)?1:0;
+    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3), native_next, jmp)==jmp)?1:0;
     #endif
 }
 void setJumpTableDefaultRef64(void* addr, void* jmp)
@@ -2058,7 +2060,7 @@ void setJumpTableDefaultRef64(void* addr, void* jmp)
     if(box64_jmptbl3[idx3][idx2][idx1] == box64_jmptbldefault0)
         return;
     idx0 = (((uintptr_t)addr)    )&JMPTABLE_MASK0;
-    native_lock_storeifref(&box64_jmptbl3[idx3][idx2][idx1][idx0], native_next, jmp);
+    native_lock_storeifref2(&box64_jmptbl3[idx3][idx2][idx1][idx0], native_next, jmp);
 }
 int setJumpTableIfRef64(void* addr, void* jmp, void* ref)
 {
@@ -2071,9 +2073,9 @@ int setJumpTableIfRef64(void* addr, void* jmp, void* ref)
     idx1 = (((uintptr_t)addr)>>JMPTABL_START1)&JMPTABLE_MASK1;
     idx0 = (((uintptr_t)addr)    )&JMPTABLE_MASK0;
     #ifdef JMPTABL_SHIFT4
-    return (native_lock_storeifref(create_jmptbl(0, idx0, idx1, idx2, idx3, idx4), jmp, ref)==jmp)?1:0;
+    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3, idx4), jmp, ref)==ref)?1:0;
     #else
-    return (native_lock_storeifref(create_jmptbl(0, idx0, idx1, idx2, idx3), jmp, ref)==jmp)?1:0;
+    return (native_lock_storeifref2(create_jmptbl(0, idx0, idx1, idx2, idx3), jmp, ref)==ref)?1:0;
     #endif
 }
 int isJumpTableDefault64(void* addr)
@@ -2139,7 +2141,7 @@ uintptr_t getJumpTableAddress64(uintptr_t addr)
     #endif
 }
 
-dynablock_t* getDB(uintptr_t addr)
+dynablock_t* getDBBlock(uintptr_t addr, void** jblock)
 {
     uintptr_t idx3, idx2, idx1, idx0;
     #ifdef JMPTABL_SHIFT4
@@ -2154,28 +2156,34 @@ dynablock_t* getDB(uintptr_t addr)
     #else
     uintptr_t ret = (uintptr_t)box64_jmptbl3[idx3][idx2][idx1][idx0];
     #endif
+    if(jblock) *jblock = (void*)ret;
 
     return *(dynablock_t**)(ret - sizeof(void*));
 }
 
+dynablock_t* getDB(uintptr_t addr)
+{
+    return getDBBlock(addr, NULL);
+}
+
 int getNeedTest(uintptr_t addr)
 {
-    uintptr_t idx3, idx2, idx1, idx0;
-    #ifdef JMPTABL_SHIFT4
-    uintptr_t idx4 = (((uintptr_t)addr)>>JMPTABL_START4)&JMPTABLE_MASK4;
-    #endif
-    idx3 = ((addr)>>JMPTABL_START3)&JMPTABLE_MASK3;
-    idx2 = ((addr)>>JMPTABL_START2)&JMPTABLE_MASK2;
-    idx1 = ((addr)>>JMPTABL_START1)&JMPTABLE_MASK1;
-    idx0 = ((addr)                )&JMPTABLE_MASK0;
-    #ifdef JMPTABL_SHIFT4
-    uintptr_t ret = (uintptr_t)box64_jmptbl4[idx4][idx3][idx2][idx1][idx0];
-    #else
-    uintptr_t ret = (uintptr_t)box64_jmptbl3[idx3][idx2][idx1][idx0];
-    #endif
-    dynablock_t* db = *(dynablock_t**)(ret - sizeof(void*));
-    return db?((ret!=(uintptr_t)db->block)?1:0):0;
+    void* jblock = NULL;
+    dynablock_t* db = getDBBlock(addr, &jblock);
+    if(!db) return 0;
+    if(jblock==db->jmpnext) return 1;
+    return 0;
 }
+
+dynablock_t* getDBnoTest(uintptr_t addr)
+{
+    void* jblock = NULL;
+    dynablock_t* db = getDBBlock(addr, &jblock);
+    if(!db) return NULL;
+    if(jblock==db->jmpnext) return NULL;
+    return db;
+}
+
 
 uintptr_t getJumpAddress64(uintptr_t addr)
 {
@@ -2192,6 +2200,31 @@ uintptr_t getJumpAddress64(uintptr_t addr)
     #else
     return (uintptr_t)box64_jmptbl3[idx3][idx2][idx1][idx0];
     #endif
+}
+
+// Helper: check if any sub-range in a host page has PROT_WRITE that is NOT part of the
+// dynarec-protected range [prot_start, prot_end). This detects mixed code+data host pages
+// on systems with large pages (e.g. 64KB) where mprotect to remove PROT_WRITE would also
+// strip writability from data regions, causing EFAULT on kernel writes (e.g. read() syscall).
+// Must be called with LOCK_PROT() held.
+static int hostPageHasExternalWrite_locked(uintptr_t host_page, uintptr_t prot_start, uintptr_t prot_end)
+{
+    uintptr_t scan = host_page;
+    uintptr_t host_end = host_page + box64_pagesize;
+    while(scan < host_end) {
+        uint32_t p = 0;
+        uintptr_t bend = 0;
+        rb_get_end(memprot, scan, &p, &bend);
+        if(bend > host_end)
+            bend = host_end;
+        if(p && (p & PROT_WRITE) && !(p & PROT_DYN)) {
+            if(scan < prot_start || bend > prot_end) {
+                return 1;
+            }
+        }
+        scan = bend;
+    }
+    return 0;
 }
 
 // Remove the Write flag from an adress range, so DB can be executed safely
@@ -2216,8 +2249,19 @@ void protectDBJumpTable(uintptr_t addr, size_t size, void* jump, void* ref)
         if(!(dyn&PROT_NEVERPROT)) {
             prot&=~PROT_CUSTOM;
             if(prot&PROT_WRITE) {
-                if(!dyn) 
-                    mprotect((void*)cur, bend-cur, prot&~PROT_WRITE);
+                if(!dyn) {
+                    if(box64_pagesize > 4096) {
+                        uintptr_t host_page = cur & ~(box64_pagesize-1);
+                        if(hostPageHasExternalWrite_locked(host_page, addr, addr+size)) {
+                            dynarec_log(LOG_INFO, "protectDBJumpTable: mixed code+data host page %p, using always_test instead of mprotect\n", (void*)host_page);
+                            prot |= PROT_NEVERCLEAN;
+                        } else {
+                            mprotect((void*)cur, bend-cur, prot&~PROT_WRITE);
+                        }
+                    } else {
+                        mprotect((void*)cur, bend-cur, prot&~PROT_WRITE);
+                    }
+                }
                 prot |= PROT_DYNAREC;
             } else 
                 prot |= PROT_DYNAREC_R;
@@ -2253,8 +2297,24 @@ void protectDB(uintptr_t addr, uintptr_t size)
         if(!(dyn&PROT_NEVERPROT)) {
             prot&=~PROT_CUSTOM;
             if(prot&PROT_WRITE) {
-                if(!dyn) 
-                    mprotect((void*)cur, bend-cur, prot&~PROT_WRITE);
+                if(!dyn) {
+                    // On large-page systems, check if removing PROT_WRITE from this host page
+                    // would also affect writable data regions sharing the same host page.
+                    // If so, use PROT_NEVERCLEAN (always_test mode) instead of mprotect,
+                    // because kernel syscalls (e.g. read()) cannot be caught via SEGV and
+                    // would return EFAULT if the buffer is on a non-writable page.
+                    if(box64_pagesize > 4096) {
+                        uintptr_t host_page = cur & ~(box64_pagesize-1);
+                        if(hostPageHasExternalWrite_locked(host_page, addr, addr+size)) {
+                            dynarec_log(LOG_INFO, "protectDB: mixed code+data host page %p, using always_test instead of mprotect\n", (void*)host_page);
+                            prot |= PROT_NEVERCLEAN;
+                        } else {
+                            mprotect((void*)cur, bend-cur, prot&~PROT_WRITE);
+                        }
+                    } else {
+                        mprotect((void*)cur, bend-cur, prot&~PROT_WRITE);
+                    }
+                }
                 prot |= PROT_DYNAREC;
             } else 
                 prot |= PROT_DYNAREC_R;
@@ -2332,11 +2392,11 @@ void neverprotectDB(uintptr_t addr, size_t size, int mark)
             if(prot&PROT_DYNAREC) {
                 prot&=~PROT_DYN;
                 if(mark)
-                    cleanDBFromAddressRange(cur, bend-cur, 0);
+                    cleanDBFromAddressRange(cur, bend-cur, (mark==2)?2:0);
                 mprotect((void*)cur, bend-cur, prot);
             } else if(prot&PROT_DYNAREC_R) {
                 if(mark)
-                    cleanDBFromAddressRange(cur, bend-cur, 0);
+                    cleanDBFromAddressRange(cur, bend-cur, (mark==2)?2:0);
                 prot &= ~PROT_DYN;
             }
             prot |= PROT_NEVERCLEAN;
@@ -2409,18 +2469,22 @@ typedef union hotpage_s {
 } hotpage_t;
 #define HOTPAGE_MAX ((1<<28)-1)
 #define N_HOTPAGE   32
-#define N_HOTPAGE_ALT   8
 #define HOTPAGE_MARK 64
 #define HOTPAGE_DIRTY 128
-#define HOTPAGE_DIRTY_ALT 1024
+#define HOTPAGE_DIRTY2 16
 static hotpage_t hotpage[N_HOTPAGE] = {0};
 void SetHotPage(int idx, uintptr_t page)
 {
     hotpage_t tmp = hotpage[idx];
     tmp.addr = page;
-    tmp.cnt = BOX64ENV(dynarec_dirty)?(BOX64ENV(dynarec_hotpage_alt)?HOTPAGE_DIRTY_ALT:HOTPAGE_DIRTY):HOTPAGE_MARK;
+    tmp.cnt = 0;
+    switch(BOX64ENV(dynarec_dirty)) {
+        case 0: tmp.cnt = HOTPAGE_MARK; break;
+        case 1: tmp.cnt = HOTPAGE_DIRTY; break;
+        case 2: tmp.cnt = HOTPAGE_DIRTY2; break;
+    }
     //TODO: use Atomics to update hotpage?
-    native_lock_store_dd(hotpage+idx, tmp.x);
+    native_lock_store_dd(&hotpage[idx], tmp.x);
 }
 int IdxHotPage(uintptr_t page)
 {
@@ -2429,36 +2493,14 @@ int IdxHotPage(uintptr_t page)
             return i;
     return -1;
 }
-void CancelHotPage(uintptr_t page)
-{
-    unneverprotectDB(page<<12, box64_pagesize);
-}
 int IdxOldestHotPage(uintptr_t page)
 {
     int best_idx = -1;
     uint32_t best_cnt = HOTPAGE_MAX+1;
-    if(BOX64ENV(dynarec_hotpage_alt)) {
-        hotpage_t tmp;
-        tmp.addr = page;
-        tmp.cnt = HOTPAGE_MAX;
-        for(int i=0; i<N_HOTPAGE_ALT; ++i) {
-            if(!hotpage[i].cnt) {
-                native_lock_store_dd(hotpage+i, tmp.x);
-                return i;
-            }
-        uint32_t cnt = hotpage[i].cnt;
-        if(cnt==HOTPAGE_MAX) cnt = 0;
-            if(cnt < best_cnt) {
-                best_idx = i;
-                best_cnt = cnt;
-            }
-        }
-        hotpage_t old = hotpage[best_idx];
-        native_lock_store_dd(hotpage+best_idx, tmp.x);
-        if(old.cnt && old.cnt!=HOTPAGE_MAX && BOX64ENV(dynarec_dirty)==1)
-            CancelHotPage(old.addr);
-    } else {
-        for(int i=0; i<N_HOTPAGE && best_cnt; ++i) {
+    for(int i=0; i<N_HOTPAGE; ++i) {
+        if(!hotpage[i].x) {
+            return i;
+        } else {
             uint32_t cnt = hotpage[i].cnt;
             if(cnt < best_cnt) {
                 best_idx = i;
@@ -2466,6 +2508,7 @@ int IdxOldestHotPage(uintptr_t page)
             }
         }
     }
+    dynarec_log(LOG_INFO, "%04d|No more live Hotpage slot for %p, recycling idx=%d (%p)\n", GetTID(), (void*)(page<<12), best_idx, (void*)(uintptr_t)(hotpage[best_idx].addr<<12));
     return best_idx;
 }
 // this function will create a new HotPage, or re-arm it if it's already registered
@@ -2478,42 +2521,20 @@ void CheckHotPage(uintptr_t addr, uint32_t prot)
     if(BOX64ENV(dynarec_nohotpage))
         return;
     uintptr_t page = addr>>12;
-    if(!BOX64ENV(dynarec_hotpage_alt)) {
-        if(!(prot&PROT_EXEC))
-            return; // needs to be an executable page
-        /*if(BOX64ENV(dynarec_dirty)>1) {
-            dynarec_log(LOG_INFO, "Detecting a Hotpage at %p, marking page as NEVERCLEAN\n", (void*)(page<<12));
-            neverprotectDB(page<<12, box64_pagesize, 1);
-            return;
-        }*/
-    }
     // look for idx
     int idx = IdxHotPage(page);
-    if(BOX64ENV(dynarec_hotpage_alt)) {
-        if(idx==-1) { IdxOldestHotPage(page); return; }
-        hotpage_t hp = hotpage[idx];
-        /*if(hp.cnt==HOTPAGE_MAX)*/ {
-            if(BOX64ENV(dynarec_dirty)>1) {
-                dynarec_log(LOG_INFO, "Detecting a Hotpage at %p (idx=%d), marking page as NEVERCLEAN\n", (void*)(page<<12), idx);
-                neverprotectDB(page<<12, box64_pagesize, 1);
-                hp.cnt = 0;
-                native_lock_store_dd(hotpage+idx, hp.x);  // free slot
-            } else {
-                dynarec_log(LOG_INFO, "Detecting a Hotpage at %p (idx=%d)\n", (void*)(page<<12), idx);
-                SetHotPage(idx, page);
-            }
-        }
-    } else {
-        if(idx!=-1 && BOX64ENV(dynarec_dirty)>1 && !hotpage[idx].cnt) {
-            // Re-arming, so put the page as NEVERCLEAN and stop bothering
-            neverprotectDB(page<<12, box64_pagesize, 1);
-            return;
-        }
-        if(idx==-1) idx = IdxOldestHotPage(page);
-        if(idx==-1) return;
-        dynarec_log(LOG_INFO, "Detecting a Hotpage at %p (idx=%d)\n", (void*)(page<<12), idx);
-        SetHotPage(idx, page);
+    if(idx!=-1 && (BOX64ENV(dynarec_dirty)>1)) {
+        // Re-arming, so put the page as NEVERCLEAN and stop bothering
+        dynarec_log(LOG_INFO, "Detecting a Hotpage at %p (idx=%d) again, switching the page to NEVERCLEAN\n", (void*)(page<<12), idx);
+        neverprotectDB(page<<12, box64_pagesize, 2);
+        hotpage_t hp = {0};
+        native_lock_store_dd(hotpage+idx, hp.x);  // free slot
+        return;
     }
+    if(idx==-1) idx = IdxOldestHotPage(page);
+    if(idx==-1) return;
+    dynarec_log(LOG_INFO, "%04d|Detecting a Hotpage at %p (idx=%d)\n", GetTID(), (void*)(page<<12), idx);
+    SetHotPage(idx, page);
 }
 int isInHotPage(uintptr_t addr)
 {
@@ -2522,45 +2543,29 @@ int isInHotPage(uintptr_t addr)
         return 0;
     uintptr_t page = addr>>12;
     int idx = IdxHotPage(page);
-    if(BOX64ENV(dynarec_hotpage_alt)) {
-        if(idx==-1 || !hotpage[idx].cnt || (hotpage[idx].cnt==HOTPAGE_MAX))
-            return 0;
-        //TODO: do Atomic stuffs instead
-        hotpage_t hp = hotpage[idx];
-        --hp.cnt;
-        native_lock_store_dd(hotpage+idx, hp.x);
-        if(!hp.cnt && BOX64ENV(dynarec_dirty)==1)
-            CancelHotPage(hp.addr);
-        return 1;
-    } else {
-        int ret = ((idx==-1) || !hotpage[idx].cnt)?0:1;
-        // decrement all hotpage, it's a hotpage "tick"
-        for(int i=0; i<N_HOTPAGE; ++i) {
-            int ok = 0;
-            do {
-                hotpage_t hp = hotpage[i];
-                hotpage_t old = hp;
-                if(!hp.cnt || (hp.cnt==HOTPAGE_MAX)) {
-                    ok = 1;
-                } else {
-                    --hp.cnt;
-                    ok = native_lock_storeifref2(hotpage+i, (void*)hp.x, (void*)old.x)==(void*)old.x;
-                }
-            } while(!ok);
-        }
-        return ret;
+    int ret = ((idx==-1) || !hotpage[idx].cnt)?0:1;
+    // decrement all hotpage, it's a hotpage "tick"
+    for(int i=0; i<N_HOTPAGE; ++i) {
+        int ok = 0;
+        do {
+            hotpage_t hp = hotpage[i];
+            hotpage_t old = hp;
+            if(!hp.cnt || (hp.cnt==HOTPAGE_MAX)) {
+                ok = 1;
+            } else {
+                --hp.cnt;
+                ok = native_lock_storeifref2(hotpage+i, (void*)hp.x, (void*)old.x)==(void*)old.x;
+            }
+        } while(!ok);
     }
+    return ret;
 }
 int checkInHotPage(uintptr_t addr)
 {
     if(addr>0x1000000000000LL) return 0;
     uintptr_t page = addr>>12;
     int idx = IdxHotPage(page);
-    if(BOX64ENV(dynarec_hotpage_alt)) {
-        return (idx==-1 || !hotpage[idx].cnt || (hotpage[idx].cnt==HOTPAGE_MAX))?0:1;
-    } else {
-        return ((idx==-1) || !hotpage[idx].cnt)?0:1;
-    }
+    return ((idx==-1) || !hotpage[idx].cnt)?0:1;
 }
 
 
@@ -2678,7 +2683,7 @@ void refreshProtection(uintptr_t addr)
 
 void allocProtection(uintptr_t addr, size_t size, uint32_t prot)
 {
-    dynarec_log(LOG_DEBUG, "allocProtection %p:%p 0x%x\n", (void*)addr, (void*)(addr+size-1), prot);
+    dynarec_log(LOG_DEBUG, "allocProtection %p:%p 0x%x", (void*)addr, (void*)(addr+size-1), prot);
     size = ALIGN(size);
     addr &= ~(box64_pagesize-1);
     LOCK_PROT();
@@ -2686,8 +2691,11 @@ void allocProtection(uintptr_t addr, size_t size, uint32_t prot)
     uintptr_t endb; 
     int there = rb_get_end(mapallmem, addr, &val, &endb);
     // block is here or absent, no half-block handled..
-    if(!there)
+    if(!there) {
+        dynarec_log_prefix(0, LOG_DEBUG, " added\n");
         rb_set(mapallmem, addr, addr+size, MEM_EXTERNAL);
+    } else
+        dynarec_log_prefix(0, LOG_DEBUG, " ignored\n");
     UNLOCK_PROT();
     // don't need to add precise tracking probably
 }

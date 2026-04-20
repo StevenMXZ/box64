@@ -1017,7 +1017,7 @@ GO(g_memory_input_stream_add_bytes, vFpp)
 GO(g_memory_input_stream_get_type, LFv)
 GO(g_memory_input_stream_new, pFv)
 GO(g_memory_input_stream_new_from_bytes, pFp)
-//GOM(g_memory_input_stream_new_from_data, pFEplp)
+GOM(g_memory_input_stream_new_from_data, pFEplp)
 GO(g_memory_output_stream_get_data, pFp)
 GO(g_memory_output_stream_get_data_size, LFp)
 GO(g_memory_output_stream_get_size, LFp)
@@ -1894,3 +1894,4 @@ GO(g_zlib_decompressor_get_file_info, pFp)
 GO(g_zlib_decompressor_get_type, LFv)
 GO(g_zlib_decompressor_new, pFu)
 //GO(_init, 
+GO(dummy_vFpippp, vFpippp)  // needed for gtkclass wrapping of GAsyncInitable Interface

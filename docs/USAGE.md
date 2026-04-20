@@ -76,6 +76,14 @@ Optimize CALL/RET opcodes. Available in WowBox64.
  * 1: Try to optimize CALL/RET, skipping the jump table when possible. 
  * 2: Try to optimize CALL/RET, skipping the jump table when possible, adding code to handle return to dirty/modified block. Does not work on WowBox64. 
 
+### BOX64_DYNAREC_SEP
+
+Optimize CALL/RET further with Secondary Entry Points (SEP). Have no effect is CALLRET is not enabled Available in WowBox64.
+
+ * 0: Do not add SEP at CALLRET return 
+ * 1: Add SEP at CALLRET return, on meory that are from known binary files [Default]
+ * 2: Add SEP at CALLRET return for all type of memory. 
+
 ### BOX64_DYNAREC_DF
 
 Enable or disable the use of deferred flags. Available in WowBox64.
@@ -174,6 +182,7 @@ Enable the emulation of x86 strong memory model. Available in WowBox64.
  * 1: Enable some memory barriers when writing to memory to emulate the x86 strong memory model in a limited way. 
  * 2: All in 1, plus memory barriers on SIMD instructions. 
  * 3: All in 2, plus more memory barriers on a regular basis. 
+ * 4: Mimic x86 TSO similarly to QEMU's approach, for evaluation purposes. 
 
 ### BOX64_DYNAREC_VOLATILE_METADATA
 
@@ -372,6 +381,13 @@ Fix 64bit inodes.
  * 0: Do not fix 64bit inodes. [Default]
  * 1: Fix 64bit inodes. 
 
+### BOX64_FORCE_LD_PRELOAD
+
+Force symbols from BOX64_LD_PRELOAD libraries to be resolved by RTLD_NEXT.
+
+ * 0: Do nothing. [Default]
+ * 1: Force symbols from BOX64_LD_PRELOAD libraries to be resolved by RTLD_NEXT. 
+
 ### BOX64_IGNOREINT3
 
 Ignore INT3 instructions.
@@ -449,6 +465,13 @@ Path to a python3 executable.
 Path to the rc file to load.
 
  * XXXX: Load the rc file XXXX, default rc files will not be loaded. 
+
+### BOX64_RDTSC_INV
+
+Report Invariant TSC bit in CPUID for Intel CPU type.
+
+ * 0: Do not report Invariant TSC for Intel CPU type (default). [Default]
+ * 1: Report Invariant TSC bit in CPUID leaf 0x80000007 for Intel CPU type. 
 
 ### BOX64_RESERVE_HIGH
 
@@ -849,6 +872,13 @@ Do not load Vulkan libraries.
 
  * 0: Load Vulkan libraries. [Default]
  * 1: Do not load Vulkan libraries, both native and x86_64. 
+
+### BOX64_NOVULKANOVERLAY
+
+Do not load x64 Vulkan overlay.
+
+ * 0: Do try to Load x64 Vulkan overlay. [Default]
+ * 1: Do not load x64 Vulkan overlay. 
 
 ### BOX64_PREFER_EMULATED
 
