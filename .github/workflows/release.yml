@@ -1,0 +1,176 @@
+
+
+name: Build and Release Box64
+
+permissions:
+  actions: 'write'
+
+on:
+  workflow_dispatch:
+  release:
+  push:
+    paths:
+      - "**/*.c"
+      - "**/*.h"
+      - "**/*.S"
+      - "**/*.py"
+      - "CMakeLists.txt"
+      - "**/*.yml"
+      - "**/*.def"
+  pull_request:
+    types: [assigned, opened, synchronize, reopened]
+    paths:
+      - "**/*.c"
+      - "**/*.h"
+      - "**/*.S"
+      - "**/*.py"
+      - "CMakeLists.txt"
+      - "**/*.yml"
+      - "**/*.def"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [X64, RISCV, RK3588, ARM64, ANDROID, TERMUX, LARCH64, PPC64LE, ANDROID_GLIBC, WOW64, ARM64-GCC-8]
+        type: [Release, Trace, StaticBuild, Box32]
+
+        exclude:
+          - platform: ANDROID
+            type: StaticBuild
+          - platform: TERMUX
+            type: StaticBuild
+          - platform: X64
+            type: StaticBuild
+          - platform: ANDROID
+            type: Box32
+          - platform: TERMUX
+            type: Box32
+          - platform: WOW64
+            type: Trace
+          - platform: WOW64
+            type: StaticBuild
+          - platform: WOW64
+            type: Box32
+          - platform: ARM64-GCC-8
+            type: Trace
+          - platform: ARM64-GCC-8
+            type: StaticBuild
+
+        include:
+          - platform: X64
+            os: ubuntu-latest
+
+          - platform: RISCV
+            os: ubuntu-latest
+
+          - platform: RK3588
+            os: ubuntu-22.04-arm
+
+          - platform: ARM64
+            os: ubuntu-22.04-arm
+
+          - platform: ANDROID
+            os: ubuntu-latest
+
+          - platform: TERMUX
+            os: ubuntu-latest
+
+          - platform: LARCH64
+            os: ubuntu-latest
+
+          - platform: PPC64LE
+            os: ubuntu-latest
+
+          - platform: ANDROID_GLIBC
+            os: ubuntu-22.04-arm
+
+          - platform: WOW64
+            os: ubuntu-22.04-arm
+
+          - platform: ARM64-GCC-8
+            os: ubuntu-22.04-arm
+            image: arm64v8/ubuntu:18.04
+
+    runs-on: ${{ matrix.os }}
+    container:
+      image: ${{ matrix.image || '' }}
+
+    steps:
+      # checkout fix (mantido)
+      - name: Checkout
+        if: matrix.platform != 'ARM64-GCC-8'
+        uses: actions/checkout@v4
+
+      - name: Checkout (no node)
+        if: matrix.platform == 'ARM64-GCC-8'
+        uses: taiki-e/checkout-action@v1
+
+      - name: Prepare env
+        run: |
+          sudo apt-get update
+
+          if [[ "${{ matrix.platform }}" == "ANDROID" || "${{ matrix.platform }}" == "TERMUX" ]]; then
+            sudo apt-get -y install git cmake make python3 patchelf p7zip
+
+            wget -q https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
+            unzip -qq android-ndk-r26b-linux.zip
+
+            echo "BOX64_COMPILER=$PWD/android-ndk-r26b/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang" >> $GITHUB_ENV
+
+            
+            echo "BOX64_PLATFORM_MARCRO=-DBAD_SIGNAL=ON -DANDROID=ON -DARM_DYNAREC=ON" >> $GITHUB_ENV
+
+          elif [[ "${{ matrix.platform }}" == "ARM64-GCC-8" ]]; then
+            sudo apt-get -y install gcc-8 g++-8 cmake make git python3
+            echo "BOX64_COMPILER=aarch64-linux-gnu-gcc-8" >> $GITHUB_ENV
+            echo "BOX64_PLATFORM_MARCRO=-DARM64=1" >> $GITHUB_ENV
+
+          else
+            sudo apt-get -y install git cmake make python3 gcc-aarch64-linux-gnu
+            echo "BOX64_COMPILER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "BOX64_PLATFORM_MARCRO=-DARM_DYNAREC=ON" >> $GITHUB_ENV
+          fi
+
+          echo "IS_TERMUX=0" >> $GITHUB_ENV
+
+      - name: Build
+        run: |
+          mkdir build
+          cd build
+
+          cmake .. \
+            -DCMAKE_C_COMPILER=${{ env.BOX64_COMPILER }} \
+            ${{ env.BOX64_PLATFORM_MARCRO }} \
+            -DCMAKE_BUILD_TYPE=Release
+
+          make -j$(nproc)
+
+      
+      - name: Package Rat (MiceWine)
+        if: matrix.platform == 'ANDROID'
+        run: |
+          cd build
+
+          mkdir -p files/usr/bin
+          cp box64 files/usr/bin
+
+          echo "name=Box64 (CI Build)" > pkg-header
+          echo "category=Box64" >> pkg-header
+          echo "version=latest" >> pkg-header
+          echo "architecture=aarch64" >> pkg-header
+          echo "vkDriverLib=" >> pkg-header
+
+          7z -tzip -mx=5 a box64-latest.rat files pkg-header
+
+      - name: Upload rat
+        if: matrix.platform == 'ANDROID'
+        uses: actions/upload-artifact@v4
+        with:
+          name: box64-MiceWine
+          path: build/box64-latest.rat
