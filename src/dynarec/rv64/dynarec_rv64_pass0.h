@@ -8,7 +8,6 @@
 #define MESSAGE(A, ...) \
     do {                \
     } while (0)
-#define MAYSETFLAGS() dyn->insts[ninst].x64.may_set = 1
 #define READFLAGS(A)                     \
     dyn->insts[ninst].x64.use_flags = A; \
     dyn->f.dfnone = 1;                   \
@@ -30,21 +29,35 @@
     }                                                                                                          \
     READFLAGS(A);
 
-#define SETFLAGS(A, B, FUSION)                                           \
-    dyn->insts[ninst].x64.set_flags = A;                                 \
-    dyn->insts[ninst].x64.state_flags = (B) & ~SF_DF;                    \
-    dyn->f.pending = (B) & SF_SET_PENDING;                               \
-    dyn->f.dfnone = ((B) & SF_SET) ? (((B) == SF_SET_NODF) ? 0 : 1) : 0; \
-    dyn->insts[ninst].nat_flags_nofusion = (FUSION)
+/* SF_SET_NODF and SF_SET_PENDING may leave the incoming deferred flags untouched. */
+#define SETFLAGS(A, B, FUSION)                                      \
+    do {                                                           \
+        dyn->insts[ninst].x64.set_flags = A;                       \
+        dyn->insts[ninst].x64.state_flags = (B) & ~SF_DF;          \
+        if (((B) & SF_SET_PENDING) != SF_SET_PENDING) {            \
+            if ((B) & SF_SET) {                                   \
+                if ((B) != SF_SET_NODF) {                          \
+                    dyn->f.pending = SF_SET;                       \
+                    dyn->f.dfnone = 1;                             \
+                }                                                  \
+            } else if (!dyn->f.dfnone) {                           \
+                dyn->f.pending = SF_SET;                           \
+                dyn->f.dfnone = 0;                                 \
+            }                                                      \
+        }                                                          \
+        dyn->insts[ninst].nat_flags_nofusion = (FUSION);           \
+    } while (0)
 
 #define EMIT(A) dyn->native_size += 4
-#define JUMP(A, C)                      \
-    add_jump(dyn, ninst);               \
-    add_next(dyn, (uintptr_t)A);        \
-    SMEND();                            \
-    dyn->insts[ninst].x64.jmp = A;      \
-    dyn->insts[ninst].x64.jmp_cond = C; \
-    dyn->insts[ninst].x64.jmp_insts = 0
+#define JUMP(A, C)                                  \
+    do {                                            \
+        dyn->insts[ninst].x64.jmp = (uintptr_t)(A); \
+        add_jump(dyn, ninst);                       \
+        add_next(dyn, dyn->insts[ninst].x64.jmp);   \
+        SMEND();                                    \
+        dyn->insts[ninst].x64.jmp_cond = C;         \
+        dyn->insts[ninst].x64.jmp_insts = 0;        \
+    } while (0)
 #define BARRIER(A)                                 \
     if (A != BARRIER_MAYBE) {                      \
         fpu_purgecache(dyn, ninst, 0, x1, x2, x3); \

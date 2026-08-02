@@ -136,10 +136,10 @@ static void* findGTaskThreadFuncFct(void* fct)
 
 // GDBusProxyTypeFunc
 #define GO(A)   \
-static uintptr_t my_GDBusProxyTypeFunc_fct_##A = 0;                                                           \
-static int my_GDBusProxyTypeFunc_##A(void* manager, void* path, void* name, void* data)                       \
-{                                                                                                             \
-    return (int)RunFunctionFmt(my_GDBusProxyTypeFunc_fct_##A, "pppp", manager, path, name, data); \
+static uintptr_t my_GDBusProxyTypeFunc_fct_##A = 0;                                                     \
+static uintptr_t my_GDBusProxyTypeFunc_##A(void* manager, void* path, void* name, void* data)           \
+{                                                                                                       \
+    return (uintptr_t)RunFunctionFmt(my_GDBusProxyTypeFunc_fct_##A, "pppp", manager, path, name, data); \
 }
 SUPER()
 #undef GO
@@ -229,9 +229,9 @@ static void* findGDBusSignalCallbackFct(void* fct)
 // GDBusMessageFilterFunction
 #define GO(A)   \
 static uintptr_t my_GDBusMessageFilterFunction_fct_##A = 0;                                                         \
-static void my_GDBusMessageFilterFunction_##A(void* connection, void* message, int incoming, void* data)            \
+static void* my_GDBusMessageFilterFunction_##A(void* connection, void* message, int incoming, void* data)            \
 {                                                                                                                   \
-    RunFunctionFmt(my_GDBusMessageFilterFunction_fct_##A, "ppip", connection, message, incoming, data); \
+    return (void*)RunFunctionFmt(my_GDBusMessageFilterFunction_fct_##A, "ppip", connection, message, incoming, data); \
 }
 SUPER()
 #undef GO
@@ -699,6 +699,11 @@ EXPORT void my_g_task_return_new_error(x64emu_t* emu, void* task, uint32_t domai
 EXPORT void my_g_input_stream_read_async(x64emu_t* emu, void* stream, void* buffer, size_t count, int io_prio, void* cancel, void* f, void* data)
 {
     my->g_input_stream_read_async(stream, buffer, count, io_prio, cancel, findGAsyncReadyCallbackFct(f), data);
+}
+
+EXPORT void my_g_file_trash_async(x64emu_t* emu, void* file, int io_priority, void* cancellable, void* callback, void* user_data)
+{
+    my->g_file_trash_async(file, io_priority, cancellable, findGAsyncReadyCallbackFct(callback), user_data);
 }
 
 EXPORT void my_g_dbus_method_invocation_return_error_valist(x64emu_t* emu, void* invocation, uint32_t domain, int code, void* fmt, x64_va_list_t b)

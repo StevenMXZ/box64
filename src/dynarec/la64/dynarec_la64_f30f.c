@@ -115,7 +115,7 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
         case 0x2C:
             INST_NAME("CVTTSS2SI Gd, Ex");
             nextop = F8;
-            GETGD;
+            GETGDd;
             GETEXSS(d0, 0, 0);
             if (!BOX64ENV(dynarec_fastround)) {
                 MOVGR2FCSR(FCSR2, xZR); // reset all bits
@@ -127,7 +127,7 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             } else {
                 FTINTRZ_W_S(d1, d0);
                 MOVFR2GR_S(gd, d1);
-                ZEROUP(gd);
+                if (NEED_ZEROUP(gd)) ZEROUP(gd);
             }
             if (!BOX64ENV(dynarec_fastround)) {
                 MOVFCSR2GR(x5, FCSR2); // get back FPSR to check
@@ -146,12 +146,11 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             if (addr >= 0x1033f98d && addr <= 0x1033f98d + 8)
                 EMIT(0);
             nextop = F8;
-            GETGD;
+            GETGDd;
             GETEXSS(d0, 0, 0);
             if (!BOX64ENV(dynarec_fastround)) {
                 MOVGR2FCSR(FCSR2, xZR); // reset all bits
             }
-            u8 = sse_setround(dyn, ninst, x5, x6);
             d1 = fpu_get_scratch(dyn);
             if (rex.w) {
                 FTINT_L_S(d1, d0);
@@ -159,9 +158,8 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             } else {
                 FTINT_W_S(d1, d0);
                 MOVFR2GR_S(gd, d1);
-                ZEROUP(gd);
+                if (NEED_ZEROUP(gd)) ZEROUP(gd);
             }
-            x87_restoreround(dyn, ninst, u8);
             if (!BOX64ENV(dynarec_fastround)) {
                 MOVFCSR2GR(x5, FCSR2); // get back FPSR to check
                 MOV32w(x3, (1 << FR_V) | (1 << FR_O));
@@ -182,8 +180,8 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     nextop = F8;
                     READFLAGS(X_OF);
                     SETFLAGS(X_OF, SF_SUBSET, NAT_FLAGS_NOFUSION);
+                    GETGDsd;
                     GETED(0);
-                    GETGD;
                     if(cpuext.lbt) {
                         X64_GET_EFLAGS(x3, X_OF);
                         SRLI_D(x3, x3, F_OF);
@@ -215,7 +213,7 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     } else {
                         ADDxw(x5, gd, ed);
                         ADDxw(gd, x5, x3);
-                        if (!rex.w) ZEROUP(gd);
+                        if (NEED_ZEROUP(gd)) ZEROUP(gd);
                     }
                     break;
                 default:
@@ -233,9 +231,10 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
         }                                                                                        \
     }                                                                                            \
     nextop = F8;                                                                                 \
-    GETGD;                                                                                       \
+    GETGDsd;                                                                                     \
     if (MODREG) {                                                                                \
         ed = TO_NAT((nextop & 7) + (rex.b << 3));                                                \
+        MARKREGs(ed);                                                                            \
         if (dyn->insts[ninst].nat_flags_fusion) {                                                \
             NATIVEJUMP(NATNO, 8);                                                                \
         } else {                                                                                 \
@@ -245,7 +244,7 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                 B##NO(tmp1, 8);                                                                  \
         }                                                                                        \
         MV(gd, ed);                                                                              \
-        if (!rex.w) ZEROUP(gd);                                                                  \
+        if (NEED_ZEROUP(gd)) ZEROUP(gd);                                                         \
     } else {                                                                                     \
         addr = geted(dyn, addr, ninst, nextop, &ed, tmp2, tmp3, &fixedaddress, rex, NULL, 1, 0); \
         if (dyn->insts[ninst].nat_flags_fusion) {                                                \
@@ -507,11 +506,35 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                 v1 = sse_get_reg_empty(dyn, ninst, x1, (nextop & 7) + (rex.b << 3));
                 VOR_V(v1, v0, v0);
             } else {
-                addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 1, 0);
-                VST(v0, ed, fixedaddress);
+                IF_UNALIGNED(ip) {
+                    addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 15, 0);
+                    for (int i = 0; i < 16; i++) {
+                        VPICKVE2GR_BU(x4, v0, i);
+                        ST_B(x4, ed, fixedaddress + i);
+                    }
+                } else {
+                    addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 1, 0);
+                    VST(v0, ed, fixedaddress);
+                }
                 SMWRITE2();
             }
             break;
+
+        case 0xA3: // ignore F3 prefix
+        case 0xA4:
+        case 0xA5:
+        case 0xAC:
+        case 0xAD:
+        case 0xAF:
+        case 0xB3:
+        case 0xB7:
+        case 0xBA:
+        case 0xBB:
+        case 0xBF:
+        case 0xC1:
+        case 0xCD:
+            return dynarec64_0F(dyn, addr - 1, ip, ninst, rex, ok, need_epilog);
+
         case 0xAE:
             nextop = F8;
             switch ((nextop >> 3) & 7) {
@@ -528,6 +551,7 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                             INST_NAME("RDFSBASE");
                         }
                         ed = TO_NAT((nextop & 7) + (rex.b << 3));
+                        MARKREGd(ed);
                         int seg = _FS + ((nextop >> 3) & 7);
                         grab_segdata(dyn, addr, ninst, x4, seg);
                         MVxw(ed, x4);
@@ -546,6 +570,7 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                             INST_NAME("WRFSBASE");
                         }
                         ed = TO_NAT((nextop & 7) + (rex.b << 3));
+                        MARKREGs(ed);
                         int seg = _FS + ((nextop >> 3) & 7) - 2;
                         if (!rex.w) {
                             ZEROUP2(x4, ed);
@@ -571,22 +596,16 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             break;
         case 0xB8:
             INST_NAME("POPCNT Gd, Ed");
-            SETFLAGS(X_ALL, SF_SET, NAT_FLAGS_NOFUSION);
+            SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
             SET_DFNONE();
             nextop = F8;
             v1 = fpu_get_scratch(dyn);
-            GETGD;
-            if (MODREG) {
-                GETED(0);
-                if (rex.w) {
-                    VINSGR2VR_D(v1, ed, 0);
-                } else {
-                    VINSGR2VR_W(v1, ed, 0);
-                }
+            GETGDsd;
+            GETED(0);
+            if (rex.w) {
+                VINSGR2VR_D(v1, ed, 0);
             } else {
-                SMREAD();
-                addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 1, 0);
-                FLDxw(v1, ed, fixedaddress);
+                VINSGR2VR_W(v1, ed, 0);
             }
             if (rex.w) {
                 VPCNT_D(v1, v1);
@@ -611,11 +630,15 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             break;
         case 0xBC:
             INST_NAME("TZCNT Gd, Ed");
-            SETFLAGS(X_ZF, SF_SUBSET, NAT_FLAGS_NOFUSION);
+            if (!BOX64DRENV(dynarec_safeflags)) {
+                SETFLAGS(X_CF | X_ZF, SF_SUBSET, NAT_FLAGS_NOFUSION);
+            } else {
+                SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
+            }
             SET_DFNONE();
             nextop = F8;
+            GETGDsd;
             GETED(0);
-            GETGD;
             if (!rex.w && MODREG) {
                 ZEROUP2(x4, ed);
                 ed = x4;
@@ -636,11 +659,15 @@ uintptr_t dynarec64_F30F(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             break;
         case 0xBD:
             INST_NAME("LZCNT Gd, Ed");
-            SETFLAGS(X_ZF, SF_SUBSET, NAT_FLAGS_NOFUSION);
+            if (!BOX64DRENV(dynarec_safeflags)) {
+                SETFLAGS(X_CF | X_ZF, SF_SUBSET, NAT_FLAGS_NOFUSION);
+            } else {
+                SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
+            }
             SET_DFNONE();
             nextop = F8;
+            GETGDsd;
             GETED(0);
-            GETGD;
             if (!rex.w && MODREG) {
                 ZEROUP2(x4, ed);
                 ed = x4;

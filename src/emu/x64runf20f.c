@@ -100,15 +100,17 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         nextop = F8;
         _GETEX(0);
         GETGD;
-        if(rex.w)
-            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>=(double)0x7fffffffffffffffLL)
+        if(rex.w) {
+            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>=(double)0x7fffffffffffffffLL) {
+                mxcsr_raise_invalid(emu);
                 GD->q[0] = 0x8000000000000000LL;
-            else
+            } else
                 GD->sq[0] = EX->d[0];
-        else {
-            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>(double)0x7fffffff)
+        } else {
+            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>(double)0x7fffffff) {
+                mxcsr_raise_invalid(emu);
                 GD->dword[0] = 0x80000000;
-            else
+            } else
                 GD->sdword[0] = EX->d[0];
             GD->dword[1] = 0;
         }
@@ -118,9 +120,10 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         _GETEX(0);
         GETGD;
         if(rex.w) {
-            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>=(double)0x7fffffffffffffffLL)
+            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>=(double)0x7fffffffffffffffLL) {
+                mxcsr_raise_invalid(emu);
                 GD->q[0] = 0x8000000000000000LL;
-            else
+            } else
                 switch(emu->mxcsr.f.MXCSR_RC) {
                     case ROUND_Nearest: {
                         int round = fegetround();
@@ -140,9 +143,10 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
                         break;
                 }
         } else {
-            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>(double)0x7fffffff)
+            if(isnan(EX->d[0]) || isinf(EX->d[0]) || EX->d[0]>(double)0x7fffffff) {
+                mxcsr_raise_invalid(emu);
                 GD->dword[0] = 0x80000000;
-            else
+            } else
                 switch(emu->mxcsr.f.MXCSR_RC) {
                     case ROUND_Nearest: {
                         int round = fegetround();
@@ -295,14 +299,14 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
             EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
             #endif
         } else {
-            //TODO: test /r
             GETGX;
             GETEX(2);
             tmp8s = F8&0x3f;
             tmp8u = F8&0x3f;
-            tmp64u = (tmp8s==63)?~0ULL:((1ULL<<(tmp8s+1))-1);
+            tmp64u = (tmp8s==0)?~0ULL:((1ULL<<tmp8s)-1);
             GX->q[0] &=~(tmp64u<<tmp8u);
             GX->q[0] |= (EX->q[0]&tmp64u)<<tmp8u;
+            GX->q[1] = 0;
         }
         break;
     case 0x79:  /* INSERTQ Gx, Ex */
@@ -313,14 +317,14 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
             EmitSignal(emu, X64_SIGILL, (void*)R_RIP, 0);
             #endif
         } else {
-            //TODO: test /r
             GETGX;
             GETEX(2);
-            tmp8u = EX->ub[8]&0x3f;
-            tmp8s = EX->ub[9]&0x3f;
-            tmp64u = (tmp8s==63)?~0ULL:((1ULL<<(tmp8s+1))-1);
-            GX->q[0] &=~(tmp64u<<tmp8u);
-            GX->q[0] |= (EX->q[0]&tmp64u)<<tmp8u;
+            tmp8u = EX->q[1]&0x3f;
+            tmp8s = (EX->q[1]>>8)&0x3f;
+            tmp64u = (tmp8u==0)?~0ULL:((1ULL<<tmp8u)-1);
+            GX->q[0] &=~(tmp64u<<tmp8s);
+            GX->q[0] |= (EX->q[0]&tmp64u)<<tmp8s;
+            GX->q[1] = 0;
         }
         break;
 
@@ -428,6 +432,7 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
     case 0xBB:
     case 0xBC:  // this one is still BSR, not TZCNT
     case 0xBD:  // and this one is still BSF, not LZCNT
+    case 0xBF:
     case 0xC1:
     case 0xCD:
         #ifdef TEST_INTERPRETER 
@@ -502,11 +507,13 @@ uintptr_t RunF20F(x64emu_t *emu, rex_t rex, uintptr_t addr, int *step)
         if (tmp64s0==(int32_t)tmp64s0 && !isnan(EX->d[0])) {
             GX->sd[0] = (int32_t)tmp64s0;
         } else {
+            mxcsr_raise_invalid(emu);
             GX->sd[0] = INT32_MIN;
         }
         if (tmp64s1==(int32_t)tmp64s1 && !isnan(EX->d[1])) {
             GX->sd[1] = (int32_t)tmp64s1;
         } else {
+            mxcsr_raise_invalid(emu);
             GX->sd[1] = INT32_MIN;
         }
 

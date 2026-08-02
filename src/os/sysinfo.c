@@ -2,10 +2,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sched.h>
+#include <inttypes.h>
 
 #include "debug.h"
 #include "sysinfo.h"
 #include "build_info.h"
+#include "cpumask.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -170,7 +172,7 @@ fallback:
     sprintf(str, "%d", (info->ncpu) ? (int)info->ncpu : 1);
     setenv("BOX64_SYSINFO_NCPU", str, 1);
     setenv("BOX64_SYSINFO_CPUNAME", info->cpuname, 1);
-    sprintf(str, "%llu", info->frequency);
+    sprintf(str, "%" PRIu64, info->frequency);
     setenv("BOX64_SYSINFO_FREQUENCY", str, 1);
     setenv("BOX64_SYSINFO_CACHED", "1", 1);
     return;
@@ -183,14 +185,14 @@ void InitializeSystemInfo(void)
     sysinfo_t info = { 0 };
     readCpuinfo(&box64_sysinfo);
 
-    char branding[3 * 4 * 4 + 1];
+    char branding[3 * 4 * 4 + 1] = {0};
     if (strstr(box64_sysinfo.cpuname, "MHz") || strstr(box64_sysinfo.cpuname, "GHz")) {
-        snprintf(branding, sizeof(branding), BOX64_BUILD_INFO_STRING_SHORT " on %.*s", 39, box64_sysinfo.cpuname);
+        snprintf(branding, sizeof(branding)-1, BOX64_BUILD_INFO_STRING_SHORT " on %.*s", 32, box64_sysinfo.cpuname);
     } else {
         if (box64_sysinfo.frequency > 1500000) {
-            snprintf(branding, sizeof(branding), BOX64_BUILD_INFO_STRING_SHORT " on %.*s @%1.2f GHz", 28, box64_sysinfo.cpuname, box64_sysinfo.frequency / 1000000000.);
+            snprintf(branding, sizeof(branding)-1, BOX64_BUILD_INFO_STRING_SHORT " on %.*s @%1.2f GHz", 28, box64_sysinfo.cpuname, box64_sysinfo.frequency / 1000000000.);
         } else {
-            snprintf(branding, sizeof(branding), BOX64_BUILD_INFO_STRING_SHORT " on %.*s @%04d MHz", 28, box64_sysinfo.cpuname, box64_sysinfo.frequency / 1000000);
+            snprintf(branding, sizeof(branding)-1, BOX64_BUILD_INFO_STRING_SHORT " on %.*s @%04" PRIu64 " MHz", 28, box64_sysinfo.cpuname, box64_sysinfo.frequency / 1000000);
         }
     }
     box64_sysinfo.box64_cpuname = (char*)calloc(strlen(branding) + 1, 1);
@@ -211,9 +213,18 @@ void InitializeSystemInfo(void)
 #endif
 
     box64_sysinfo.box64_ncpu = box64_sysinfo.ncpu;
-    if (BOX64ENV(maxcpu) && box64_sysinfo.ncpu > (uint64_t)BOX64ENV(maxcpu)) {
+    if (BOX64ENV(skipcpu) && box64_sysinfo.box64_ncpu > (uint64_t)BOX64ENV(skipcpu)) {
+        box64_sysinfo.box64_ncpu -= (uint64_t)BOX64ENV(skipcpu);
+    }
+    if (BOX64ENV(maxcpu) && box64_sysinfo.box64_ncpu > (uint64_t)BOX64ENV(maxcpu)) {
         box64_sysinfo.box64_ncpu = (uint64_t)BOX64ENV(maxcpu);
     }
+    while(box64env.skipcpu && box64_sysinfo.box64_ncpu+box64env.skipcpu>box64_sysinfo.ncpu) {
+        --box64_sysinfo.box64_ncpu;
+        box64env.maxcpu = box64_sysinfo.box64_ncpu;
+    }
+    if(box64env.skipcpu)
+        cpumask_apply(box64env.skipcpu, box64env.maxcpu);
 }
 
 uint32_t helper_getcpu(x64emu_t* emu)

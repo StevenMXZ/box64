@@ -30,19 +30,22 @@ size_t customGetUsableSize(void* p);
 #endif
 
 #ifdef DYNAREC
+#include "dynacache.h"
 typedef struct dynablock_s dynablock_t;
 typedef struct mmaplist_s mmaplist_t;
-typedef struct DynaCacheBlock_s DynaCacheBlock_t;
 // custom protection flag to mark Page that are Write protected for Dynarec purpose
 uintptr_t AllocDynarecMap(uintptr_t x64_addr, size_t size, int is_new);
 void FreeDynarecMap(uintptr_t addr);
 mmaplist_t* NewMmaplist();
 void DelMmaplist(mmaplist_t* list);
 int MmaplistHasNew(mmaplist_t* list, int clear);
+int MmaplistIsDirty(mmaplist_t* list);
 int MmaplistNBlocks(mmaplist_t* list);
-void MmaplistFillBlocks(mmaplist_t* list, DynaCacheBlock_t* blocks);
+size_t MmaplistTotalAlloc(mmaplist_t* list);
+void MmaplistFillBlocks(mmaplist_t* list, CompressedDynaCacheBlock_t* blocks);
 void MmaplistAddNBlocks(mmaplist_t* list, int nblocks);
 int MmaplistAddBlock(mmaplist_t* list, int fd, off_t offset, void* orig, size_t size, intptr_t delta_map, uintptr_t mapping_start);
+int MmaplistAddCompressedBlock(mmaplist_t* list, int type, void* src, size_t src_size, void* orig, size_t size, intptr_t delta_map, uintptr_t mapping_start);
 
 void addDBFromAddressRange(uintptr_t addr, size_t size);
 // Will return 1 if at least 1 db in the address range
@@ -118,6 +121,7 @@ void refreshProtection(uintptr_t addr);
 uint32_t getProtection(uintptr_t addr);
 uint32_t getProtection_fast(uintptr_t addr);
 int getMmapped(uintptr_t addr);
+int getMAllocated(uintptr_t addr);
 int memExist(uintptr_t addr);
 void loadProtectionFromMap(void);
 #ifdef DYNAREC
@@ -125,7 +129,6 @@ void protectDB(uintptr_t addr, size_t size);
 void protectDBJumpTable(uintptr_t addr, size_t size, void* jump, void* ref);
 void unprotectDB(uintptr_t addr, size_t size, int mark);    // if mark==0, the blocks are not marked as potentially dirty
 void neverprotectDB(uintptr_t addr, size_t size, int mark);
-void unneverprotectDB(uintptr_t addr, size_t size);
 int isprotectedDB(uintptr_t addr, size_t size);
 #endif
 void* find32bitBlock(size_t size);

@@ -4,6 +4,7 @@
 // undef to get Close to SSE Float->int conversions
 // #define PRECISE_CVT
 
+#ifndef STEP_PASS
 #if STEP == 0
 #include "dynarec_la64_pass0.h"
 #elif STEP == 1
@@ -13,11 +14,22 @@
 #elif STEP == 3
 #include "dynarec_la64_pass3.h"
 #endif
+#define STEP_PASS
+#endif
 
 #include "debug.h"
 #include "la64_emitter.h"
 #include "../emu/x64primop.h"
 #include "dynarec_la64_consts.h"
+#include "dynarec_la64_functions.h"
+
+#define LA64_RESTORE_VZERO()              \
+    do {                                  \
+        if (cpuext.lasx)                  \
+            XVXOR_V(VZERO, VZERO, VZERO); \
+        else                              \
+            VXOR_V(VZERO, VZERO, VZERO);  \
+    } while (0)
 
 #define F8      *(uint8_t*)(addr++)
 #define F8S     *(int8_t*)(addr++)
@@ -36,10 +48,223 @@
 // LOCK_* define
 #define LOCK_LOCK (int*)1
 
+#if STEP == 0
+#define UP32_READ(r)                                                                \
+    do {                                                                            \
+        if (IS_GPR(r)) dyn->insts[ninst].up32_read |= (uint16_t)(1 << (TO_X64(r))); \
+    } while (0)
+#define UP32_WRITE64(r)                                                                \
+    do {                                                                               \
+        if (IS_GPR(r)) dyn->insts[ninst].up32_write64 |= (uint16_t)(1 << (TO_X64(r))); \
+    } while (0)
+#define UP32_WRITE32(r)                                                     \
+    do {                                                                    \
+        if (IS_GPR(r)) {                                                    \
+            UP32_WRITE64(r);                                                \
+            dyn->insts[ninst].up32_write32 |= (uint16_t)(1 << (TO_X64(r))); \
+        }                                                                   \
+    } while (0)
+#define UP32_READALL()                                   \
+    do {                                                 \
+        dyn->insts[ninst].up32_read |= (uint16_t)0xFFFF; \
+    } while (0)
+#else
+#define UP32_READ(r)    ((void)(r))
+#define UP32_WRITE64(r) ((void)(r))
+#define UP32_WRITE32(r) ((void)(r))
+#define UP32_READALL()  ((void)0)
+#endif
+
+#define COMIS_FCC fcc7
+
+static inline int comis_fuse_cond(int condition)
+{
+    switch (condition) {
+        case X64_JMP_JC:
+        case X64_JMP_JNC:
+        case X64_JMP_JZ:
+        case X64_JMP_JNZ:
+        case X64_JMP_JBE:
+        case X64_JMP_JNBE:
+        case X64_JMP_JP:
+        case X64_JMP_JNP: return condition;
+        default: return -1;
+    }
+}
+
+static inline int comis_fuse_fcmp(int condition)
+{
+    switch (condition) {
+        case X64_JMP_JC:
+        case X64_JMP_JNC: return cULT;
+        case X64_JMP_JZ:
+        case X64_JMP_JNZ: return cUEQ;
+        case X64_JMP_JBE:
+        case X64_JMP_JNBE: return cULE;
+        default: return cUN;
+    }
+}
+
+static inline int comis_fuse_inverted(int condition)
+{
+    switch (condition) {
+        case X64_JMP_JNC:
+        case X64_JMP_JNZ:
+        case X64_JMP_JNBE:
+        case X64_JMP_JNP: return 1;
+        default: return 0;
+    }
+}
+
+#if STEP == 0
+#define COMIS_MARK()                                                  \
+    do {                                                              \
+        dyn->insts[ninst].comis_mark = BOX64ENV(dynarec_nativeflags); \
+    } while (0)
+
+#define COMIS_JCC(I)                                             \
+    do {                                                         \
+        if (BOX64ENV(dynarec_nativeflags))                       \
+            dyn->insts[ninst].comis_fusion = comis_fuse_cond(I); \
+    } while (0)
+
+#define COMIS_FUSED() 0
+#else
+#define COMIS_MARK()  ((void)0)
+#define COMIS_JCC(I)  ((void)(I))
+#define COMIS_FUSED() (dyn->insts[ninst].comis_fusion >= 0)
+#endif
+
+#define COMIS_BRANCH_NOT_TAKEN(offset, jmp)                      \
+    do {                                                         \
+        if (comis_fuse_inverted(dyn->insts[ninst].comis_fusion)) \
+            BCNEZ_safe(COMIS_FCC, offset, jmp);                  \
+        else                                                     \
+            BCEQZ_safe(COMIS_FCC, offset, jmp);                  \
+    } while (0)
+#define COMIS_BRANCH_TAKEN(offset, jmp)                          \
+    do {                                                         \
+        if (comis_fuse_inverted(dyn->insts[ninst].comis_fusion)) \
+            BCEQZ_safe(COMIS_FCC, offset, jmp);                  \
+        else                                                     \
+            BCNEZ_safe(COMIS_FCC, offset, jmp);                  \
+    } while (0)
+
+#define COMIS_SPILL_S() \
+    IFX (X_ALL) { SPILL_EFLAGS(); }
+#define COMIS_SPILL_D() SPILL_EFLAGS()
+#define EMIT_COMIS_FLAGS(type, lhs, rhs, tmp)                                                  \
+    do {                                                                                       \
+        COMIS_MARK();                                                                          \
+        if (COMIS_FUSED())                                                                     \
+            FCMP_##type(COMIS_FCC, lhs, rhs, comis_fuse_fcmp(dyn->insts[ninst].comis_fusion)); \
+        if (!COMIS_FUSED() || dyn->insts[ninst].x64.gen_flags) {                               \
+            CLEAR_FLAGS(tmp);                                                                  \
+            IFX (X_ZF | X_PF | X_CF) {                                                         \
+                FCMP_##type(fcc0, lhs, rhs, cUN);                                              \
+                BCEQZ_MARK(fcc0);                                                              \
+                ORI(xFlags, xFlags, (1 << F_ZF) | (1 << F_PF) | (1 << F_CF));                  \
+                B_MARK3_nocond;                                                                \
+            }                                                                                  \
+            MARK;                                                                              \
+            IFX (X_CF) {                                                                       \
+                FCMP_##type(fcc1, lhs, rhs, cLT);                                              \
+                BCEQZ_MARK2(fcc1);                                                             \
+                ORI(xFlags, xFlags, 1 << F_CF);                                                \
+                B_MARK3_nocond;                                                                \
+            }                                                                                  \
+            MARK2;                                                                             \
+            IFX (X_ZF) {                                                                       \
+                FCMP_##type(fcc2, lhs, rhs, cEQ);                                              \
+                BCEQZ_MARK3(fcc2);                                                             \
+                ORI(xFlags, xFlags, 1 << F_ZF);                                                \
+            }                                                                                  \
+            MARK3;                                                                             \
+            COMIS_SPILL_##type();                                                              \
+        }                                                                                      \
+    } while (0)
+
+#define MARKREGd(r)          \
+    do {                     \
+        if (rex.w)           \
+            UP32_WRITE64(r); \
+        else                 \
+            UP32_WRITE32(r); \
+    } while (0)
+
+#define MARKREGdz(r)         \
+    do {                     \
+        if (!rex.is32bits)   \
+            UP32_WRITE64(r); \
+        else                 \
+            UP32_WRITE32(r); \
+    } while (0)
+
+#define MARKREGs(r)              \
+    do {                         \
+        if (rex.w) UP32_READ(r); \
+    } while (0)
+
+#define MARKREGsz(r)                     \
+    do {                                 \
+        if (!rex.is32bits) UP32_READ(r); \
+    } while (0)
+
+#define MARKREGsd(r) \
+    do {             \
+        MARKREGs(r); \
+        MARKREGd(r); \
+    } while (0)
+
+#define MARKREGsdz(r) \
+    do {              \
+        MARKREGsz(r); \
+        MARKREGdz(r); \
+    } while (0)
+
+#define NEED_ZEROUP32(r) \
+    (!(IS_GPR(r)) || !((dyn->insts[ninst].up32_skip >> (TO_X64(r))) & 1))
+#define NEED_ZEROUP(r) (!rex.w && NEED_ZEROUP32(r))
+
+#ifndef IF_UNALIGNED
+#define IF_UNALIGNED(A) if(dyn->insts[ninst].unaligned)
+#endif
+#ifndef IF_ALIGNED
+#define IF_ALIGNED(A)   if(!dyn->insts[ninst].unaligned)
+#endif
+
 // GETGD    get x64 register in gd
-#define GETGD gd = TO_NAT(((nextop & 0x38) >> 3) + (rex.r << 3));
-// GETVD    get x64 register in vd
-#define GETVD vd = TO_NAT(vex.v)
+#define GETGDw                                              \
+    do {                                                    \
+        gd = TO_NAT(((nextop & 0x38) >> 3) + (rex.r << 3)); \
+    } while (0)
+#define GETGDs        \
+    do {              \
+        GETGDw;       \
+        MARKREGs(gd); \
+    } while (0)
+#define GETGD GETGDs
+#define GETGDd        \
+    do {              \
+        GETGDw;       \
+        MARKREGd(gd); \
+    } while (0)
+#define GETGDsd       \
+    do {              \
+        GETGDs;       \
+        MARKREGd(gd); \
+    } while (0)
+#define GETVDs                   \
+    do {                         \
+        vd = TO_NAT(vex.v);      \
+        if (rex.w) MARKREGs(vd); \
+    } while(0)
+
+#define GETVDsd                  \
+    do {                         \
+        vd = TO_NAT(vex.v);      \
+        if (rex.w) MARKREGsd(vd); \
+    } while(0)
 
 // GETGW extract x64 register in gd, that is i
 #define GETGW(i)                                        \
@@ -51,6 +276,7 @@
 #define GETED(D)                                                                                \
     if (MODREG) {                                                                               \
         ed = TO_NAT((nextop & 7) + (rex.b << 3));                                               \
+        MARKREGs(ed);                                                                           \
         wback = 0;                                                                              \
     } else {                                                                                    \
         SMREAD();                                                                               \
@@ -59,9 +285,16 @@
         ed = x1;                                                                                \
     }
 
+#define GETEDsd(D)                \
+    do {                          \
+        GETED(D);                 \
+        if (MODREG) MARKREGd(ed); \
+    } while (0)
+
 #define GETEDz(D)                                                                               \
     if (MODREG) {                                                                               \
         ed = TO_NAT((nextop & 7) + (rex.b << 3));                                               \
+        MARKREGs(ed);                                                                           \
         wback = 0;                                                                              \
     } else {                                                                                    \
         SMREAD();                                                                               \
@@ -74,6 +307,7 @@
 #define GETEDH(hint, ret, D)                                                                       \
     if (MODREG) {                                                                                  \
         ed = TO_NAT((nextop & 7) + (rex.b << 3));                                                  \
+        MARKREGs(ed);                                                                              \
         wback = 0;                                                                                 \
     } else {                                                                                       \
         SMREAD();                                                                                  \
@@ -84,6 +318,7 @@
 #define GETEDW(hint, ret, D)                                                                       \
     if (MODREG) {                                                                                  \
         ed = TO_NAT((nextop & 7) + (rex.b << 3));                                                  \
+        MARKREGs(ed);                                                                              \
         MV(ret, ed);                                                                               \
         wback = 0;                                                                                 \
     } else {                                                                                       \
@@ -126,6 +361,7 @@
 #define GETSED(D)                                                                               \
     if (MODREG) {                                                                               \
         ed = TO_NAT((nextop & 7) + (rex.b << 3));                                               \
+        MARKREGs(ed);                                                                           \
         wback = 0;                                                                              \
         if (!rex.w) {                                                                           \
             ADD_W(x1, ed, xZR);                                                                 \
@@ -799,6 +1035,10 @@
 #define CBNZ_MARKSEG(reg)                  \
     j64 = GETMARKSEG - (dyn->native_size); \
     BNEZ(reg, j64);
+// Branch to MARKSEG if reg1==reg2 (use j64)
+#define BEQ_MARKSEG(reg1, reg2)            \
+    j64 = GETMARKSEG - (dyn->native_size); \
+    BEQ(reg1, reg2, j64);
 
 #define IFX(A)      if ((dyn->insts[ninst].x64.gen_flags & (A)))
 #define IFXA(A, B)  if ((dyn->insts[ninst].x64.gen_flags & (A)) && (B))
@@ -928,7 +1168,7 @@
 #else
 #define X87_PUSH_OR_FAIL(var, dyn, ninst, scratch, t)                                                                                                    \
     if ((dyn->lsx.x87stack == 8) || (dyn->lsx.pushed == 8)) {                                                                                            \
-        if (dyn->need_dump) dynarec_log(LOG_NONE, " Warning, suspicious x87 Push, stack=%d/%d on inst %d\n", dyn->lsx.x87stack, dyn->lsx.pushed, ninst); \
+        if (dyn->need_dump && dyn->need_dump != 3) dynarec_log(LOG_NONE, " Warning, suspicious x87 Push, stack=%d/%d on inst %d\n", dyn->lsx.x87stack, dyn->lsx.pushed, ninst); \
         dyn->abort = 1;                                                                                                                                  \
         return addr;                                                                                                                                     \
     }                                                                                                                                                    \
@@ -936,7 +1176,7 @@
 
 #define X87_PUSH_EMPTY_OR_FAIL(dyn, ninst, scratch)                                                                                                      \
     if ((dyn->lsx.x87stack == 8) || (dyn->lsx.pushed == 8)) {                                                                                            \
-        if (dyn->need_dump) dynarec_log(LOG_NONE, " Warning, suspicious x87 Push, stack=%d/%d on inst %d\n", dyn->lsx.x87stack, dyn->lsx.pushed, ninst); \
+        if (dyn->need_dump && dyn->need_dump != 3) dynarec_log(LOG_NONE, " Warning, suspicious x87 Push, stack=%d/%d on inst %d\n", dyn->lsx.x87stack, dyn->lsx.pushed, ninst); \
         dyn->abort = 1;                                                                                                                                  \
         return addr;                                                                                                                                     \
     }                                                                                                                                                    \
@@ -944,7 +1184,7 @@
 
 #define X87_POP_OR_FAIL(dyn, ninst, scratch)                                                                                                           \
     if ((dyn->lsx.x87stack == -8) || (dyn->lsx.poped == 8)) {                                                                                          \
-        if (dyn->need_dump) dynarec_log(LOG_NONE, " Warning, suspicious x87 Pop, stack=%d/%d on inst %d\n", dyn->lsx.x87stack, dyn->lsx.poped, ninst); \
+        if (dyn->need_dump && dyn->need_dump != 3) dynarec_log(LOG_NONE, " Warning, suspicious x87 Pop, stack=%d/%d on inst %d\n", dyn->lsx.x87stack, dyn->lsx.poped, ninst); \
         dyn->abort = 1;                                                                                                                                \
         return addr;                                                                                                                                   \
     }                                                                                                                                                  \
@@ -952,11 +1192,13 @@
 #endif
 
 #ifndef READFLAGS
-#define READFLAGS(A)                           \
-    if ((A) != X_PEND                          \
-        && (dyn->f == status_unk)) {           \
-        CALL_(const_updateflags, -1, 0, 0, 0); \
-        dyn->f = status_none;                  \
+#define READFLAGS(A)                          \
+    if ((A) != X_PEND                         \
+        && (dyn->f == status_unk)) {          \
+        TABLE64C(x6, const_updateflags_la64); \
+        JIRL(xRA, x6, 0);                     \
+        LA64_RESTORE_VZERO();                 \
+        dyn->f = status_none;                 \
     }
 #endif
 
@@ -972,18 +1214,36 @@
     READFLAGS(A)
 #endif
 
-#define NAT_FLAGS_OPS(op1, op2, s1, s2)                                     \
-    do {                                                                    \
-        dyn->insts[dyn->insts[ninst].nat_next_inst].nat_flags_op1 = op1;    \
-        dyn->insts[dyn->insts[ninst].nat_next_inst].nat_flags_op2 = op2;    \
-        if (dyn->insts[ninst + 1].no_scratch_usage && IS_GPR(op1)) {        \
-            MV(s1, op1);                                                    \
-            dyn->insts[dyn->insts[ninst].nat_next_inst].nat_flags_op1 = s1; \
-        }                                                                   \
-        if (dyn->insts[ninst + 1].no_scratch_usage && IS_GPR(op2)) {        \
-            MV(s2, op2);                                                    \
-            dyn->insts[dyn->insts[ninst].nat_next_inst].nat_flags_op2 = s2; \
-        }                                                                   \
+#define NAT_FLAGS_OPS(op1, op2, s1, s2)                                            \
+    do {                                                                           \
+        int nat_op1 = op1;                                                         \
+        int nat_op2 = op2;                                                         \
+        int nat_next = dyn->insts[ninst].nat_next_inst;                            \
+        int nat_last = nat_next;                                                   \
+        while (nat_last && dyn->insts[nat_last].nat_next_inst)                     \
+            nat_last = dyn->insts[nat_last].nat_next_inst;                         \
+        int nat_copy = 0;                                                          \
+        for (int nat_i = ninst + 1; nat_i < nat_last; ++nat_i)                     \
+            if (dyn->insts[nat_i].no_scratch_usage)                                \
+                nat_copy = 1;                                                      \
+        if (nat_copy && IS_GPR(nat_op1)) {                                         \
+            if (dyn->insts[ninst].up32_read & (1 << TO_X64(nat_op1)))              \
+                MV(s1, nat_op1);                                                   \
+            else                                                                   \
+                ZEROUP2(s1, nat_op1);                                              \
+            nat_op1 = s1;                                                          \
+        }                                                                          \
+        if (nat_copy && IS_GPR(nat_op2)) {                                         \
+            if (dyn->insts[ninst].up32_read & (1 << TO_X64(nat_op2)))              \
+                MV(s2, nat_op2);                                                   \
+            else                                                                   \
+                ZEROUP2(s2, nat_op2);                                              \
+            nat_op2 = s2;                                                          \
+        }                                                                          \
+        for (int nat_i = nat_next; nat_i; nat_i = dyn->insts[nat_i].nat_next_inst) { \
+            dyn->insts[nat_i].nat_flags_op1 = nat_op1;                             \
+            dyn->insts[nat_i].nat_flags_op2 = nat_op2;                             \
+        }                                                                          \
     } while (0)
 
 #define NAT_FLAGS_ENABLE_CARRY() dyn->insts[ninst].nat_flags_carry = 1
@@ -993,7 +1253,9 @@
 #define GRABFLAGS(A)                                             \
     if ((A) != X_PEND                                            \
         && ((dyn->f == status_unk) || (dyn->f == status_set))) { \
-        CALL_(const_updateflags, -1, 0, 0, 0);                   \
+        TABLE64C(x6, const_updateflags_la64);                    \
+        JIRL(xRA, x6, 0);                                        \
+        LA64_RESTORE_VZERO();                                    \
         dyn->f = status_none;                                    \
     }
 
@@ -1137,6 +1399,7 @@
 #endif
 
 #define native_pass STEPNAME(native_pass)
+#define updateflags_pass STEPNAME(updateflags_pass)
 
 #define dynarec64_00          STEPNAME(dynarec64_00)
 #define dynarec64_0F          STEPNAME(dynarec64_0F)
@@ -1307,7 +1570,7 @@
 #define x87_unreflectcount    STEPNAME(x87_unreflectcount)
 #define x87_purgecache        STEPNAME(x87_purgecache)
 
-#define sse_setround      STEPNAME(sse_setround)
+#define sse_fcsr3_from_mxcsr STEPNAME(sse_fcsr3_from_mxcsr)
 #define mmx_get_reg       STEPNAME(mmx_get_reg)
 #define mmx_get_reg_empty STEPNAME(mmx_get_reg_empty)
 #define sse_purge07cache  STEPNAME(sse_purge07cache)
@@ -1511,8 +1774,7 @@ void fpu_reflectcache(dynarec_la64_t* dyn, int ninst, int s1, int s2, int s3);
 void fpu_unreflectcache(dynarec_la64_t* dyn, int ninst, int s1, int s2, int s3);
 void fpu_pushcache(dynarec_la64_t* dyn, int ninst, int s1, int not07);
 void fpu_popcache(dynarec_la64_t* dyn, int ninst, int s1, int not07);
-// Set rounding according to mxcsr flags, return reg to restore flags
-int sse_setround(dynarec_la64_t* dyn, int ninst, int s1, int s2);
+void sse_fcsr3_from_mxcsr(dynarec_la64_t* dyn, int ninst, int s1);
 
 // SSE/SSE2 helpers
 // purge the XMM0..XMM7 cache (before function call)
@@ -1715,13 +1977,13 @@ uintptr_t dynarec64_DF(dynarec_la64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
         break
 
 // Dummy macros
-#define B__safe(a, b, c) XOR(xZR, xZR, xZR)
-#define B_(a, b, c)      XOR(xZR, xZR, xZR)
-#define S_(a, b, c)      XOR(xZR, xZR, xZR)
-#define MV_(a, b, c, d)  XOR(xZR, xZR, xZR)
+#define B__safe(a, b, c, d) XOR(xZR, xZR, xZR)
+#define B_(a, b, c)       XOR(xZR, xZR, xZR)
+#define S_(a, b, c)       XOR(xZR, xZR, xZR)
+#define MV_(a, b, c, d)   XOR(xZR, xZR, xZR)
 
-#define NATIVEJUMP_safe(COND, val) \
-    B##COND##_safe(dyn->insts[ninst].nat_flags_op1, dyn->insts[ninst].nat_flags_op2, val);
+#define NATIVEJUMP_safe(COND, val, jmp) \
+    B##COND##_safe(dyn->insts[ninst].nat_flags_op1, dyn->insts[ninst].nat_flags_op2, val, jmp);
 
 #define NATIVEJUMP(COND, val) \
     B##COND(dyn->insts[ninst].nat_flags_op1, dyn->insts[ninst].nat_flags_op2, val);

@@ -98,22 +98,23 @@ int fpu_get_reg_x87(dynarec_arm_t* dyn, int ninst, int t, int n)
 void fpu_free_reg(dynarec_arm_t* dyn, int reg)
 {
     // TODO: check upper limit?
+    int t = dyn->n.neoncache[reg].t;
+    int n = dyn->n.neoncache[reg].n;
     dyn->n.fpuused[reg] = 0;
-    if(dyn->n.neoncache[reg].t==NEON_CACHE_YMMR || dyn->n.neoncache[reg].t==NEON_CACHE_YMMW) {
-        dyn->n.ymm_removed |= 1<<dyn->n.neoncache[reg].n;
-        if(dyn->n.neoncache[reg].t==NEON_CACHE_YMMW)
-            dyn->n.ymm_write |= 1<<dyn->n.neoncache[reg].n;
+    if(t==NEON_CACHE_XMMR || t==NEON_CACHE_XMMW) {
+        dyn->n.xmm_removed |= 1<<n;
+        if(t==NEON_CACHE_XMMW)
+            dyn->n.xmm_write |= 1<<n;
+    } else if(t==NEON_CACHE_YMMR || t==NEON_CACHE_YMMW) {
+        dyn->n.ymm_removed |= 1<<n;
+        if(t==NEON_CACHE_YMMW)
+            dyn->n.ymm_write |= 1<<n;
         if(reg>SCRATCH0)
-            dyn->n.ymm_regs |= (8LL+reg-SCRATCH0)<<(dyn->n.neoncache[reg].n*4);
+            dyn->n.ymm_regs |= (8LL+reg-SCRATCH0)<<(n*4);
         else
-            dyn->n.ymm_regs |= ((uint64_t)(reg-EMM0))<<(dyn->n.neoncache[reg].n*4);
+            dyn->n.ymm_regs |= ((uint64_t)(reg-EMM0))<<(n*4);
     }
-    if(dyn->n.neoncache[reg].t==NEON_CACHE_XMMR || dyn->n.neoncache[reg].t==NEON_CACHE_XMMW) {
-        dyn->n.xmm_removed |= 1<<dyn->n.neoncache[reg].n;
-        if(dyn->n.neoncache[reg].t==NEON_CACHE_XMMW)
-            dyn->n.xmm_write |= 1<<dyn->n.neoncache[reg].n;
-    }
-    if(dyn->n.neoncache[reg].t!=NEON_CACHE_ST_F && dyn->n.neoncache[reg].t!=NEON_CACHE_ST_D && dyn->n.neoncache[reg].t!=NEON_CACHE_ST_I64)
+    if(t!=NEON_CACHE_ST_F && t!=NEON_CACHE_ST_D && t!=NEON_CACHE_ST_I64)
         dyn->n.neoncache[reg].v = 0;
     if(dyn->n.fpu_scratch && reg==SCRATCH0+dyn->n.fpu_scratch-1)
         --dyn->n.fpu_scratch;
@@ -448,13 +449,12 @@ int fpuCacheNeedsTransform(dynarec_arm_t* dyn, int ninst) {
     if((dyn->insts[i2].x64.barrier&BARRIER_FLOAT))
         // if the barrier as already been apply, no transform needed
         return ((dyn->insts[ninst].x64.barrier&BARRIER_FLOAT))?0:(isCacheEmpty(dyn, ninst)?0:1);
-    int ret = 0;
     if(!i2) { // just purge
         if(dyn->insts[ninst].n.stack_next)
             return 1;
         if(dyn->insts[ninst].ymm0_out)
             return 1;
-        for(int i=0; i<32 && !ret; ++i)
+        for(int i=0; i<32; ++i)
             if(dyn->insts[ninst].n.neoncache[i].v) {       // there is something at ninst for i
                 int t = dyn->insts[ninst].n.neoncache[i].t;
                 int n = dyn->insts[ninst].n.neoncache[i].n;
@@ -463,15 +463,15 @@ int fpuCacheNeedsTransform(dynarec_arm_t* dyn, int ninst) {
                 || t==NEON_CACHE_ST_D
                 || t==NEON_CACHE_ST_I64)
                 && n<dyn->insts[ninst].n.stack_pop))
-                    ret = 1;
+                    return 1;
             }
-        return ret;
+        return 0;
     }
     // Check if ninst can be compatible to i2
     if(dyn->insts[ninst].n.stack_next != dyn->insts[i2].n.stack-dyn->insts[i2].n.stack_push) {
         return 1;
     }
-    if(dyn->insts[ninst].ymm0_out && (dyn->insts[ninst].ymm0_out&~dyn->insts[i2].ymm0_in))
+    if(dyn->insts[ninst].ymm0_out && (dyn->insts[ninst].ymm0_out&~dyn->insts[i2].ymm0_in&~dyn->insts[i2].n.ymm_unneeded))
         return 1;
     neoncache_t cache_i2 = dyn->insts[i2].n;
     neoncacheUnwind(&cache_i2);
@@ -483,23 +483,23 @@ int fpuCacheNeedsTransform(dynarec_arm_t* dyn, int ninst) {
             if(!cache_i2.neoncache[i].v) {    // but there is nothing at i2 for i
                 if(((t==NEON_CACHE_XMMR) || (t==NEON_CACHE_XMMW)) && (cache_i2.xmm_unneeded&(1<<n))) { /* nothing*/}
                 else if(((t==NEON_CACHE_YMMR) || (t==NEON_CACHE_YMMW)) && (cache_i2.ymm_unneeded&(1<<n))) { /* nothing*/}
-                else 
-                ret = 1;
+                else
+                    return 1;
             } else if(dyn->insts[ninst].n.neoncache[i].v!=cache_i2.neoncache[i].v) {  // there is something different
                 if(n!=cache_i2.neoncache[i].n) {   // not the same x64 reg
-                    ret = 1;
+                    return 1;
                 }
                 else if((t == NEON_CACHE_XMMR) && cache_i2.neoncache[i].t == NEON_CACHE_XMMW)
                     {/* nothing */ }
                 else if((t == NEON_CACHE_YMMR) && cache_i2.neoncache[i].t == NEON_CACHE_YMMW)
                     {/* nothing */ }
                 else
-                    ret = 1;
+                    return 1;
             }
         } else if(cache_i2.neoncache[i].v)
-            ret = 1;
+            return 1;
     }
-    return ret;
+    return 0;
 }
 
 void neoncacheUnwind(neoncache_t* cache)
@@ -776,6 +776,11 @@ static const char* df_status[] = {"unknown", "set", "none_pending", "none"};
 void printf_x64_instruction(dynarec_native_t* dyn, zydis_dec_t* dec, instruction_x64_t* inst, const char* name);
 void inst_name_pass3(dynarec_native_t* dyn, int ninst, const char* name, rex_t rex)
 {
+    if (dyn->need_dump == 3) {
+        printf_x64_instruction(dyn, rex.is32bits ? my_context->dec32 : my_context->dec, &dyn->insts[ninst].x64, name);
+        if (!BOX64ENV(dynarec_gdbjit) && !BOX64ENV(dynarec_perf_map))
+            return;
+    }
     if (!dyn->need_dump && !BOX64ENV(dynarec_gdbjit) && !BOX64ENV(dynarec_perf_map)) {
         /*zydis_dec_t* dec = rex.is32bits ? my_context->dec32 : my_context->dec;
         if(dec && !OpcodeOK(dec, dyn->insts[ninst].x64.addr) && !strstr(name, "Illegal")) {
@@ -805,8 +810,8 @@ void inst_name_pass3(dynarec_native_t* dyn, int ninst, const char* name, rex_t r
         else
             length += sprintf(buf + length, " NF:%d", dyn->insts[ninst].nat_flags_op);
     }
-    if (dyn->insts[ninst].use_nat_flags || dyn->insts[ninst].set_nat_flags || dyn->insts[ninst].need_nat_flags) {
-        length += sprintf(buf + length, " nf:%hhx/%hhx/%hhx", dyn->insts[ninst].set_nat_flags, dyn->insts[ninst].use_nat_flags, dyn->insts[ninst].need_nat_flags);
+    if (dyn->insts[ninst].use_nat_flags || dyn->insts[ninst].set_nat_flags || dyn->insts[ninst].need_nat_flags || dyn->insts[ninst].nat_flags_in) {
+        length += sprintf(buf + length, " nf:%hhx/%hhx/%hhx->%hhx", dyn->insts[ninst].set_nat_flags, dyn->insts[ninst].use_nat_flags, dyn->insts[ninst].nat_flags_in, dyn->insts[ninst].need_nat_flags);
     }
     if (dyn->insts[ninst].invert_carry)
         length += sprintf(buf + length, " CI");
@@ -880,7 +885,9 @@ void inst_name_pass3(dynarec_native_t* dyn, int ninst, const char* name, rex_t r
     if (dyn->insts[ninst].n.combined1 || dyn->insts[ninst].n.combined2) {
         length += sprintf(buf + length, " %s:%d/%d", dyn->insts[ninst].n.swapped ? "SWP" : "CMB", dyn->insts[ninst].n.combined1, dyn->insts[ninst].n.combined2);
     }
-    if (dyn->need_dump) {
+    if(dyn->insts[ninst].x64.self_loop)
+        length += sprintf(buf + length, " self-loop");
+    if (dyn->need_dump && dyn->need_dump != 3) {
         printf_x64_instruction(dyn, rex.is32bits ? my_context->dec32 : my_context->dec, &dyn->insts[ninst].x64, name);
         dynarec_log(LOG_NONE, "%s%p: %d emitted opcodes, inst=%d, %s%s\n",
             (dyn->need_dump > 1) ? "\e[32m" : "",
@@ -942,20 +949,21 @@ static void mmx_reset(neoncache_t* n)
         n->mmxcache[i] = -1;
 }
 
-static void sse_reset(neoncache_t* n)
+static void sse_reset(neoncache_t* n, int use_ymm)
 {
     for (int i=0; i<16; ++i)
         n->ssecache[i].v = -1;
-    for (int i=0; i<32; ++i)
-        if(n->neoncache[i].t==NEON_CACHE_YMMR || n->neoncache[i].t==NEON_CACHE_YMMW)
-            n->neoncache[i].v = 0;
+    if(use_ymm)
+        for (int i=0; i<32; ++i)
+            if(n->neoncache[i].t==NEON_CACHE_YMMR || n->neoncache[i].t==NEON_CACHE_YMMW)
+                n->neoncache[i].v = 0;
 }
 
 void fpu_reset(dynarec_native_t* dyn)
 {
     x87_reset(&dyn->n);
     mmx_reset(&dyn->n);
-    sse_reset(&dyn->n);
+    sse_reset(&dyn->n, dyn->use_ymm);
     fpu_reset_reg(dyn);
     dyn->ymm_zero = 0;
 }
@@ -964,7 +972,7 @@ void fpu_reset_ninst(dynarec_native_t* dyn, int ninst)
 {
     x87_reset(&dyn->insts[ninst].n);
     mmx_reset(&dyn->insts[ninst].n);
-    sse_reset(&dyn->insts[ninst].n);
+    sse_reset(&dyn->insts[ninst].n, dyn->use_ymm);
     fpu_reset_reg_neoncache(&dyn->insts[ninst].n);
 
 }
@@ -1107,6 +1115,7 @@ static void propagateNativeFlags(dynarec_arm_t* dyn, int start)
 //printf_log(LOG_INFO, " will use:%x, carry:%d, generate inverted carry:%d\n", used_flags, used_flags&NF_CF, dyn->insts[ninst].gen_inverted_carry);
     if(!used_flags) return; // the flags wont be used, so just cancel
     int nc = dyn->insts[ninst].gen_inverted_carry?0:1;
+    int oldnc = nc;
     int carry = used_flags&NF_CF;
     // propagate
     while(ninst<dyn->size) {
@@ -1142,6 +1151,10 @@ static void propagateNativeFlags(dynarec_arm_t* dyn, int start)
                 return;
         } else
             ++ninst;
+        if(ninst<dyn->size) {
+            dyn->insts[ninst].nat_flags_in |= used_flags&use_flags;
+            if(carry) dyn->insts[ninst].normal_carry_in = oldnc;
+        }
     }
 }
 
@@ -1352,7 +1365,7 @@ void tryEarlyFpuBarrier(dynarec_arm_t* dyn, int last_fpu_used, int ninst)
                 }
                 // we will stop there, not trying to guess too much thing
                 if((usefull && (i+1)!=ninst)) {
-                    if(BOX64ENV(dynarec_dump) || BOX64ENV(dynarec_log)>1) dynarec_log(LOG_NONE, "Putting early Float Barrier in %d for %d\n", i+1, ninst);
+                    if((BOX64ENV(dynarec_dump) && BOX64ENV(dynarec_dump) != 3) || BOX64ENV(dynarec_log)>1) dynarec_log(LOG_NONE, "Putting early Float Barrier in %d for %d\n", i+1, ninst);
                     dyn->insts[i+1].x64.barrier|=BARRIER_FLOAT;
                 }
                 return;
@@ -1362,7 +1375,7 @@ void tryEarlyFpuBarrier(dynarec_arm_t* dyn, int last_fpu_used, int ninst)
         for(int pred=0; pred<dyn->insts[i].pred_sz; ++pred) {
             if(dyn->insts[i].pred[pred]<=last_fpu_used) {
                 if(usefull && ((i+1)!=ninst)) {
-                    if(BOX64ENV(dynarec_dump) || BOX64ENV(dynarec_log)>1) dynarec_log(LOG_NONE, "Putting early Float Barrier in %d for %d\n", i+1, ninst);
+                    if((BOX64ENV(dynarec_dump) && BOX64ENV(dynarec_dump) != 3) || BOX64ENV(dynarec_log)>1) dynarec_log(LOG_NONE, "Putting early Float Barrier in %d for %d\n", i+1, ninst);
                     dyn->insts[i+1].x64.barrier|=BARRIER_FLOAT;
                 }
                 return;
@@ -1372,7 +1385,7 @@ void tryEarlyFpuBarrier(dynarec_arm_t* dyn, int last_fpu_used, int ninst)
             usefull = 1;
     }
     if(usefull) {
-        if(BOX64ENV(dynarec_dump) || BOX64ENV(dynarec_log)>1) dynarec_log(LOG_NONE, "Putting early Float Barrier in %d for %d\n", last_fpu_used, ninst);
+        if((BOX64ENV(dynarec_dump) && BOX64ENV(dynarec_dump) != 3) || BOX64ENV(dynarec_log)>1) dynarec_log(LOG_NONE, "Putting early Float Barrier in %d for %d\n", last_fpu_used, ninst);
         dyn->insts[last_fpu_used+1].x64.barrier|=BARRIER_FLOAT;
     }
 }
@@ -1523,7 +1536,7 @@ static int ymm_preload_reg(dynarec_arm_t* dyn, int ninst, int last, int ymm)
     while((ninst<last) && (i!=-1)) {
         // check if the reg is always free
         if(!(!dyn->insts[ninst].n.neoncache[i].v ||
-            (dyn->insts[ninst].n.neoncache[i].n==ymm 
+            (dyn->insts[ninst].n.neoncache[i].n==ymm
                 && (dyn->insts[ninst].n.neoncache[i].t==NEON_CACHE_YMMR || dyn->insts[ninst].n.neoncache[i].t==NEON_CACHE_YMMW))))
             i = -1; // nope
         else

@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <sys/utsname.h>
 #include <sys/resource.h>
+#include <sys/prctl.h>
 #include <poll.h>
 #include <sys/epoll.h>
 
@@ -40,6 +41,8 @@
 #include "x64tls.h"
 #include "elfloader.h"
 #include "x64int_private.h"
+#include "syscall_user_dispatch.h"
+#include "cpumask.h"
 
 typedef struct x64_sigaction_s x64_sigaction_t;
 typedef struct x64_stack_s x64_stack_t;
@@ -47,7 +50,6 @@ typedef struct x64_stack_s x64_stack_t;
 extern int mkdir(const char *path, mode_t mode);
 extern int mknod(const char *path, mode_t mode, dev_t dev);
 extern int chmod(const char *path, mode_t mode);
-extern int fchmodat (int __fd, const char *__file, mode_t __mode, int __flag);
 
 //int32_t my_getrandom(x64emu_t* emu, void* buf, uint32_t buflen, uint32_t flags);
 int of_convert(int flag);
@@ -131,6 +133,9 @@ static const scwrap_t syscallwrap[] = {
     //[25] = {__NR_mremap, 5},    // wrapped to track protection
     [27] = {__NR_mincore, 3},
     [28] = {__NR_madvise, 3},
+    #ifdef __NR_dup
+    [32] = {__NR_dup, 1},
+    #endif
     #ifdef __NR_dup2
     [33] = {__NR_dup2, 2},
     #endif
@@ -138,8 +143,10 @@ static const scwrap_t syscallwrap[] = {
     [34] = {__NR_pause, 0},
     #endif
     [35] = {__NR_nanosleep, 2},
+    [36] = {__NR_getitimer, 2},
     [38] = {__NR_setitimer, 3},
     [39] = {__NR_getpid, 0},
+    [40] = {__NR_sendfile, 4},
     [41] = {__NR_socket, 3},
     [42] = {__NR_connect, 3},
     [43] = {__NR_accept, 3},
@@ -194,11 +201,15 @@ static const scwrap_t syscallwrap[] = {
     [90] = {__NR_chmod, 2},
     #endif
     [91] = {__NR_fchmod, 2},
+    [93] = {__NR_fchown, 3},
+    [95] = {__NR_umask, 1},
     [96] = {__NR_gettimeofday, 2},
     #ifdef __NR_getrlimit
     [97] = {__NR_getrlimit, 2},
     #endif
+    [98] = {__NR_getrusage, 2},
     [99] = {__NR_sysinfo, 1},
+    [100] = {__NR_times, 1},
     [101] = {__NR_ptrace, 4},
     [102] = {__NR_getuid, 0},
     [104] = {__NR_getgid, 0},
@@ -212,7 +223,13 @@ static const scwrap_t syscallwrap[] = {
     [112] = {__NR_setsid, 0},
     [113] = {__NR_setreuid, 2},
     [114] = {__NR_setregid, 2},
+    [115] = {__NR_getgroups, 2},
+    #ifdef __NR_setgroups
+    [116] = {__NR_setgroups, 2},
+    #endif
+    [117] = {__NR_setresuid, 3},
     [118] = {__NR_getresuid, 3},
+    [119] = {__NR_setresgid, 3},
     [120] = {__NR_getresgid, 3},
     [121] = {__NR_getpgid, 1},
     [122] = {__NR_setfsuid, 1},
@@ -229,7 +246,13 @@ static const scwrap_t syscallwrap[] = {
     [137] = {__NR_statfs, 2},
     [138] = {__NR_fstatfs, 2},
     [140] = {__NR_getpriority, 2},
+    [141] = {__NR_setpriority, 3},
+    [142] = {__NR_sched_setparam, 2},
+    [143] = {__NR_sched_getparam, 2},
+    [144] = {__NR_sched_setscheduler, 3},
     [145] = {__NR_sched_getscheduler, 1},
+    [146] = {__NR_sched_get_priority_max, 1},
+    [147] = {__NR_sched_get_priority_min, 1},
     [148] = {__NR_sched_rr_get_interval, 2},
     [149] = {__NR_mlock, 2},
     [150] = {__NR_munlock, 2},
@@ -250,8 +273,8 @@ static const scwrap_t syscallwrap[] = {
     [201] = {__NR_time, 1},
     #endif
     [202] = {__NR_futex, 6},
-    [203] = {__NR_sched_setaffinity, 3},
-    [204] = {__NR_sched_getaffinity, 3},
+    //[203] = {__NR_sched_setaffinity, 3},
+    //[204] = {__NR_sched_getaffinity, 3},
     [206] = {__NR_io_setup, 2},
     [207] = {__NR_io_destroy, 1},
     [208] = {__NR_io_getevents, 4},
@@ -264,6 +287,7 @@ static const scwrap_t syscallwrap[] = {
     [217] = {__NR_getdents64, 3},
     [218] = {__NR_set_tid_address, 1},
     [220] = {__NR_semtimedop, 4},
+    [221] = {__NR_fadvise64, 4},
     [228] = {__NR_clock_gettime, 2},
     [229] = {__NR_clock_getres, 2},
     [230] = {__NR_clock_nanosleep, 4},
@@ -280,6 +304,7 @@ static const scwrap_t syscallwrap[] = {
     [239] = {__NR_get_mempolicy, 5},
     [247] = {__NR_waitid, 5},
     [251] = {__NR_ioprio_set, 3},
+    [252] = {__NR_ioprio_get, 2},
     #ifdef __NR_inotify_init
     [253] = {__NR_inotify_init, 0},   //0xFD
     #endif
@@ -298,6 +323,7 @@ static const scwrap_t syscallwrap[] = {
     [266] = {__NR_symlinkat, 3},
     //[267] = {__NR_readlinkat, 4},
     [268] = {__NR_fchmodat, 3},
+    [269] = {__NR_faccessat, 3},
     [270] = {__NR_pselect6, 6},
     [272] = {__NR_unshare, 1},
     [273] = {__NR_set_robust_list, 2},
@@ -307,10 +333,12 @@ static const scwrap_t syscallwrap[] = {
     [281] = {__NR_epoll_pwait, 5},
     #endif
     //[282] = {__NR__signalfd, 3},
+    [283] = {__NR_timerfd_create, 2},
     #ifdef _NR_eventfd
     [284] = {__NR_eventfd, 1},
     #endif
     [285] = {__NR_fallocate, 4},
+    [286] = {__NR_timerfd_settime, 4},
     [288] = {__NR_accept4, 4},
     [289] = {__NR_signalfd4, 4},    // this one might need some wrapping
     [290] = {__NR_eventfd2, 2},
@@ -324,6 +352,7 @@ static const scwrap_t syscallwrap[] = {
     [298] = {__NR_perf_event_open, 5},
     [302] = {__NR_prlimit64, 4},
     [309] = {__NR_getcpu, 3}, // need wrapping?
+    [312] = {__NR_kcmp, 5},
     [314] = {__NR_sched_setattr, 3},
     [315] = {__NR_sched_getattr, 4},
     [316] = {__NR_renameat2, 5},
@@ -335,6 +364,12 @@ static const scwrap_t syscallwrap[] = {
     #ifdef __NR_copy_file_range
     // TODO: call back if unavailable?
     [326] = {__NR_copy_file_range, 6},
+    #endif
+    #ifdef __NR_preadv2
+    [327] = {__NR_preadv2, 6},
+    #endif
+    #ifdef __NR_pwritev2
+    [328] = {__NR_pwritev2, 6},
     #endif
     #ifdef __NR_statx
     // TODO: implement fallback if __NR_statx is not defined
@@ -349,8 +384,8 @@ static const scwrap_t syscallwrap[] = {
     #ifdef __NR_io_uring_register
     [427] = {__NR_io_uring_register, 4},
     #endif
-    #ifdef __NR_fchmodat4
-    [434] = {__NR_fchmodat4, 4},
+    #ifdef __NR_pidfd_open
+    [434] = {__NR_pidfd_open, 2},
     #endif
     #ifdef __NR_close_range
     [436] = {__NR_close_range, 3},
@@ -488,7 +523,8 @@ static int clone_fn_syscall(void* arg)
 void EXPORT x64Syscall(x64emu_t *emu)
 {
     // check if it's a wine process, then filter the syscall (simulate SECCMP)
-    if(box64_wine && !box64_is32bits) {
+    // Wine uses SUD (syscall user dispatch) since 11.5, bypass this hack if SUD is effective
+    if(box64_wine && !box64_is32bits && (!emu || !emu->sud_enabled)) {
         //64bits only here...
         uintptr_t ret_addr = R_RIP-2;
         if(/*ret_addr<0x700000000000LL &&*/ (my_context->signals[X64_SIGSYS]>2) && !FindElfAddress(my_context, ret_addr)) {
@@ -518,6 +554,12 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
         snprintf(buff, 255, "%04d|%p: Calling syscall 0x%02X (%d) %p %p %p %p %p %p", GetTID(), (void*)R_RIP, s, s, (void*)R_RDI, (void*)R_RSI, (void*)R_RDX, (void*)R_R10, (void*)R_R8, (void*)R_R9);
         if(!BOX64ENV(rolling_log))
             printf_log(LOG_NONE, "%s", buff);
+    }
+    if(my_syscall_user_dispatch(emu, R_RIP - 2, s, 0))
+        return;
+    if (s == 157 && R_EDI == PR_SET_SYSCALL_USER_DISPATCH) {
+        S_RAX = my_syscall_user_dispatch_prctl(emu, R_RSI, R_RDX, R_R10, (void*)R_R8);
+        return;
     }
     // check wrapper first
     uint32_t cnt = sizeof(syscallwrap) / sizeof(scwrap_t);
@@ -672,6 +714,13 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
         case 25: // sys_mremap
             R_RAX = (uintptr_t)my_mremap(emu, (void*)R_RDI, R_RSI, R_RDX, R_R10d, (void*)R_R8);
             break;
+        #ifndef __NR_dup
+        case 32: // sys_dup
+            S_RAX = dup(S_EDI);
+            if(S_RAX==-1)
+                S_RAX = -errno;
+            break;
+        #endif
         #ifndef __NR_dup2
         case 33: // sys_dup2
             S_RAX = dup2(S_EDI, S_ESI);
@@ -867,6 +916,30 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
                 S_RAX = -errno;
             break;
         #endif
+        case 203:   // sys_sched_setaffinity
+            {
+                uint8_t new_mask[R_ESI];
+                memcpy(new_mask, (void*)R_RDX, R_ESI);
+                cpumask_maxcpu(new_mask, R_ESI, BOX64ENV(maxcpu));
+                cpumask_shiftleft(new_mask, R_ESI, BOX64ENV(skipcpu));
+                R_RAX = syscall(__NR_sched_setaffinity, S_EDI, R_ESI, new_mask);
+            }
+            if(S_RAX==-1)
+                S_RAX = -errno;
+            break;
+        case 204:   // sys_sched_getaffinity
+            {
+                uint8_t new_mask[R_ESI];
+                R_RAX = syscall(__NR_sched_getaffinity, S_EDI, R_ESI, new_mask);
+                if(S_RAX==-1)
+                    S_RAX = -errno;
+                else {
+                    cpumask_shiftright(new_mask, R_ESI, BOX64ENV(skipcpu));
+                    cpumask_maxcpu(new_mask, R_ESI, BOX64ENV(maxcpu));
+                    memcpy((void*)R_RDX, new_mask, R_ESI);
+                }
+            }
+            break;
         #if !defined(__NR_epoll_wait) || !defined(NOALIGN)
         case 232:
             R_RAX = my_epoll_wait(emu, S_EDI, (void*)R_RSI, S_EDX, S_R10d);
@@ -958,13 +1031,6 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
         case 334: // It is helpeful to run static binary
             R_RAX = -ENOSYS;
             break;
-        #ifndef __NR_fchmodat4
-        case 434:
-            S_RAX = fchmodat(S_EDI, (void*)R_RSI, (mode_t)R_RDX, S_R10d);
-            if(S_RAX==-1)
-                S_RAX = -errno;
-            break;
-        #endif
         #ifndef __NR_faccessat2
         case 439:
             S_RAX = faccessat(S_EDI, (void*)R_RSI, (mode_t)R_RDX, S_R10d);
@@ -1011,6 +1077,14 @@ long EXPORT my_syscall(x64emu_t *emu)
     static uint32_t warned = 0;
     uint32_t s = R_EDI;
     printf_dump(LOG_DEBUG, "%04d| %p: Calling libc syscall 0x%02X (%d) %p %p %p %p %p\n", GetTID(), (void*)R_RIP, s, s, (void*)R_RSI, (void*)R_RDX, (void*)R_RCX, (void*)R_R8, (void*)R_R9);
+    if (s == 157 && S_ESI == PR_SET_SYSCALL_USER_DISPATCH) {
+        long ret = my_syscall_user_dispatch_prctl(emu, R_RDX, R_RCX, R_R8, (void*)R_R9);
+        if(ret < 0) {
+            errno = -ret;
+            return -1;
+        }
+        return 0;
+    }
     // check wrapper first
     uint32_t cnt = sizeof(syscallwrap) / sizeof(scwrap_t);
     if(s<cnt && syscallwrap[s].nats) {
@@ -1094,6 +1168,10 @@ long EXPORT my_syscall(x64emu_t *emu)
         #endif
         case 25: // sys_mremap
             return (intptr_t)my_mremap(emu, (void*)R_RSI, R_RDX, R_RCX, R_R8d, (void*)R_R9);
+        #ifndef __NR_dup
+        case 32:
+            return dup(S_ESI);
+        #endif
         #ifndef __NR_dup2
         case 33:
             return dup2(S_ESI, S_EDX);
@@ -1213,6 +1291,16 @@ long EXPORT my_syscall(x64emu_t *emu)
         case 133: // sys_mknod
             return mknod((void*)R_RSI, R_EDX, R_RCX);
         #endif
+        case 157: // sys_prctl
+            if (S_ESI == PR_SET_SYSCALL_USER_DISPATCH) {
+                long ret = my_syscall_user_dispatch_prctl(emu, R_RDX, R_RCX, R_R8, (void*)R_R9);
+                if(ret < 0) {
+                    errno = -ret;
+                    return -1;
+                }
+                return 0;
+            }
+            return syscall(__NR_prctl, S_ESI, R_RDX, R_RCX, R_R8, R_R9);
         case 158: // sys_arch_prctl
             return my_arch_prctl(emu, S_ESI, (void*)R_RDX);
         #ifndef __NR_setrlimit
@@ -1227,6 +1315,30 @@ long EXPORT my_syscall(x64emu_t *emu)
         case 201: // sys_time
             return (intptr_t)time((void*)R_RSI);
         #endif
+        case 203:   // sys_sched_setaffinity
+            {
+                uint8_t new_mask[R_EDX];
+                memcpy(new_mask, (void*)R_RCX, R_EDX);
+                cpumask_maxcpu(new_mask, R_EDX, BOX64ENV(maxcpu));
+                cpumask_shiftleft(new_mask, R_EDX, BOX64ENV(skipcpu));
+                R_RAX = syscall(__NR_sched_setaffinity, S_ESI, R_EDX, new_mask);
+            }
+            if(S_RAX==-1)
+                S_RAX = -errno;
+            break;
+        case 204:   // sys_sched_getaffinity
+            {
+                uint8_t new_mask[R_EDX];
+                R_RAX = syscall(__NR_sched_getaffinity, S_ESI, R_EDX, new_mask);
+                if(S_RAX==-1)
+                    S_RAX = -errno;
+                else {
+                    cpumask_shiftright(new_mask, R_EDX, BOX64ENV(skipcpu));
+                    cpumask_maxcpu(new_mask, R_EDX, BOX64ENV(maxcpu));
+                    memcpy((void*)R_RCX, new_mask, R_EDX);
+                }
+            }
+            break;
         #ifndef __NR_epoll_create
         case 213:
             return epoll_create(S_ESI);
@@ -1281,10 +1393,6 @@ long EXPORT my_syscall(x64emu_t *emu)
         #endif
         case 317:   // sys_seccomp
             return 0;  // ignoring call
-        #ifndef __NR_fchmodat4
-        case 434:
-            return fchmodat(S_ESI, (void*)R_RDX, (mode_t)R_RCX, S_R8d);
-        #endif
         #ifndef __NR_faccessat2
         case 439:
             return faccessat(S_ESI, (void*)R_RDX, (mode_t)R_RCX, S_R8d);

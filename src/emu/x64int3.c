@@ -205,7 +205,7 @@ void x64Int3(x64emu_t* emu, uintptr_t* addr)
                 } else if (strstr(s, "popen")==s) {
                     tmp = (char*)(R_RDI);
                     char* tmp2 = (char*)(R_RSI);
-                    snprintf(buff, 256, "%04d|%p: Calling %s(\"%s\")", tid, *(void**)(R_RSP), s, (tmp)?tmp:"(nil)", (tmp2)?tmp2:"nil");
+                    snprintf(buff, 256, "%04d|%p: Calling %s(\"%s\", \"%s\")", tid, *(void**)(R_RSP), s, (tmp)?tmp:"(nil)", (tmp2)?tmp2:"nil");
                     perr = 5;
                 } else if (!strcmp(s, "read") || !strcmp(s, "my_read")) {
                     snprintf(buff, 256, "%04d|%p: Calling %s(%d, %p, %zu)", tid, *(void**)(R_RSP), s, R_EDI, (void*)R_RSI, R_RDX);
@@ -272,7 +272,7 @@ void x64Int3(x64emu_t* emu, uintptr_t* addr)
                     snprintf(buff, 256, "%04d|%p: Calling %s(\"%s\")", tid, *(void**)(R_RSP), s, (char*)R_RDI);
                 } else if (!strcmp(s, "poll")) {
                     struct pollfd* pfd = (struct pollfd*)(R_RDI);
-                    snprintf(buff, 256, "%04d|%p: Calling %s(%p[%d/%d/%d, ...], %d, %d)", tid, *(void**)(R_RSP), s, pfd, pfd->fd, pfd->events, pfd->revents, R_ESI, R_EDX);
+                    snprintf(buff, 256, "%04d|%p: Calling %s(%p[%d/%d/%d, ...], %d, %d)", tid, *(void**)(R_RSP), s, pfd, pfd?pfd->fd:-1, pfd?pfd->events:0, pfd?pfd->revents:0, R_ESI, R_EDX);
                 } else if (!strcmp(s, "__printf_chk") || !strcmp(s, "my___printf_chk")) {
                     tmp = (char*)(R_RSI);
                     snprintf(buff, 256, "%04d|%p: Calling %s(%d, \"%s\" (,%p))", tid, *(void**)(R_RSP), s, R_EDI, (tmp)?tmp:"(nil)", (void*)(R_RDX));

@@ -14,7 +14,7 @@
 
 #define MESSAGE(A, ...)                                                   \
     do {                                                                  \
-        if (dyn->need_dump) dynarec_log(LOG_NONE, __VA_ARGS__); \
+        if (dyn->need_dump && dyn->need_dump != 3) dynarec_log(LOG_NONE, __VA_ARGS__); \
     } while (0)
 #define NEW_INST                                                                                                  \
     dyn->vector_sew = dyn->insts[ninst].vector_sew_entry;                                                         \
@@ -26,7 +26,11 @@
         dyn->insts[ninst].ymm0_pass3 = dyn->ymm_zero;                                                             \
     }                                                                                                             \
     AREFLAGSNEEDED()
-#define INST_EPILOG
+#define INST_EPILOG                                      \
+    dyn->vector_sew = dyn->insts[ninst].vector_sew_exit; \
+    dyn->inst_sew = dyn->vector_sew;                     \
+    dyn->inst_vlmul = VECTOR_LMUL1;                      \
+    dyn->inst_vl = 0;
 #define INST_NAME(name) inst_name_pass3(dyn, ninst, name, rex)
 
 #define TABLE64(A, V)                                 \
@@ -64,7 +68,7 @@
     } while (0)
 
 #define DEFAULT_VECTOR                                                                                                                  \
-    if (BOX64ENV(dynarec_log) >= LOG_INFO || dyn->need_dump || BOX64ENV(dynarec_missing) == 2) {                                        \
+    if (BOX64ENV(dynarec_log) >= LOG_INFO || (dyn->need_dump && dyn->need_dump != 3) || BOX64ENV(dynarec_missing) == 2) {                \
         dynarec_log(LOG_NONE, "%p: Dynarec fallback to scalar version because of %s Opcode ", (void*)ip, rex.is32bits ? "x86" : "x64"); \
         zydis_dec_t* dec = rex.is32bits ? my_context->dec32 : my_context->dec;                                                          \
         if (dec) {                                                                                                                      \

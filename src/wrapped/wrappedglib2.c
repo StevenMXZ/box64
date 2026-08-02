@@ -166,12 +166,13 @@ static uintptr_t fct_funcs_dispatch_##A = 0;                                    
 static int my_funcs_dispatch_##A(void* source, void* cb, void* data) {                              \
     uintptr_t old = fct_funcs_dispatch_cb_##A;                                                      \
     fct_funcs_dispatch_cb_##A = (uintptr_t)cb;                                                      \
-    return (int)RunFunctionFmt((uintptr_t)ref_gsourcefuncs_##A->dispatch, "ppp", source, cb?my_funcs_dispatch_cb_##A:NULL, data); \
+    int ret = (int)RunFunctionFmt((uintptr_t)ref_gsourcefuncs_##A->dispatch, "ppp", source, cb?my_funcs_dispatch_cb_##A:NULL, data); \
     fct_funcs_dispatch_cb_##A = old;                                                                \
+    return ret;                                                                                     \
 }                                                                                                   \
 static uintptr_t fct_funcs_finalize_##A = 0;                                                        \
-static int my_funcs_finalize_##A(void* source) {                                                    \
-    return (int)RunFunctionFmt((uintptr_t)ref_gsourcefuncs_##A->finalize, "p", source);             \
+static void my_funcs_finalize_##A(void* source) {                                                   \
+    RunFunctionFmt((uintptr_t)ref_gsourcefuncs_##A->finalize, "p", source);                         \
 }
 SUPER()
 #undef GO
@@ -276,10 +277,10 @@ static void* findEqualFct(void* fct)
 }
 // GDestroyFunc ...
 #define GO(A)   \
-static uintptr_t my_destroyfunc_fct_##A = 0;                               \
-static int my_destroyfunc_##A(void* a, void* b)                            \
-{                                                                          \
-    return RunFunctionFmt(my_destroyfunc_fct_##A, "pp", a, b); \
+static uintptr_t my_destroyfunc_fct_##A = 0;           \
+static void my_destroyfunc_##A(void* data)             \
+{                                                      \
+    RunFunctionFmt(my_destroyfunc_fct_##A, "p", data); \
 }
 SUPER()
 #undef GO
@@ -320,10 +321,10 @@ static void* findSpawnChildSetupFct(void* fct)
 }
 // GSourceFunc ...
 #define GO(A)   \
-static uintptr_t my_GSourceFunc_fct_##A = 0;                                \
-static void my_GSourceFunc_##A(void* a, void* b, void* c, void* d)          \
-{                                                                           \
-    RunFunctionFmt(my_GSourceFunc_fct_##A, "pppp", a, b, c, d); \
+static uintptr_t my_GSourceFunc_fct_##A = 0;                    \
+static int my_GSourceFunc_##A(void* a)                          \
+{                                                               \
+    return (int)RunFunctionFmt(my_GSourceFunc_fct_##A, "p", a); \
 }
 SUPER()
 #undef GO
@@ -620,6 +621,10 @@ static void* reverseGPrintFuncFct(void* fct)
     #undef GO
     return NULL;
 }
+
+#undef SUPER
+#include "super80.h"
+
 // GOptionArg ...
 #define GO(A)   \
 static uintptr_t my_GOptionArg_fct_##A = 0;                                            \
@@ -650,6 +655,25 @@ static void* reverseGOptionArgFct(void* fct)
     #undef GO
     return (void*)AddCheckBridge(my_lib->w.bridge, iFpppp, fct, 0, "GOptionArgFunc");
 }
+
+#undef SUPER
+#define SUPER() \
+GO(0)   \
+GO(1)   \
+GO(2)   \
+GO(3)   \
+GO(4)   \
+GO(5)   \
+GO(6)   \
+GO(7)   \
+GO(8)   \
+GO(9)   \
+GO(10)  \
+GO(11)  \
+GO(12)  \
+GO(13)  \
+GO(14)  \
+
 // GOptionParse ...
 #define GO(A)   \
 static uintptr_t my_GOptionParse_fct_##A = 0;                                            \
@@ -719,9 +743,9 @@ static void* findGThreadFuncFct(void* fct)
 // TimeOut
 #define GO(A)   \
 static uintptr_t my_TimeOut_fct_##A = 0;            \
-static void my_TimeOut_##A(void* a)                 \
+static int my_TimeOut_##A(void* a)                  \
 {                                                   \
-    RunFunctionFmt(my_TimeOut_fct_##A, "p", a);     \
+    return (int)RunFunctionFmt(my_TimeOut_fct_##A, "p", a);     \
 }
 SUPER()
 #undef GO
@@ -762,11 +786,11 @@ static void* findGTraverseFuncFct(void* fct)
 }
 
 // GLogWriterFunc ...
-#define GO(A)                                                         \
-    static uintptr_t my_GLogWriterFunc_fct_##A = 0;                   \
-    static int my_GLogWriterFunc_##A(void* a, void* b)                \
-    {                                                                 \
-        return RunFunctionFmt(my_GLogWriterFunc_fct_##A, "pp", a, b); \
+#define GO(A)                                                                       \
+    static uintptr_t my_GLogWriterFunc_fct_##A = 0;                                 \
+    static int my_GLogWriterFunc_##A(uint32_t a, void* b, size_t c, void* d)        \
+    {                                                                               \
+        return (int)RunFunctionFmt(my_GLogWriterFunc_fct_##A, "upLp", a, b, c, d);  \
     }
 SUPER()
 #undef GO
@@ -1529,28 +1553,40 @@ typedef struct my_GOptionEntry_s {
   void*     arg_description;
 } my_GOptionEntry_t;
 
+static int countGOptionEntries(my_GOptionEntry_t* entries)
+{
+    int idx = 0;
+    while (entries && entries[idx].long_name)
+        ++idx;
+    return idx;
+}
+
+static void wrapGOptionEntries(my_GOptionEntry_t* dst, my_GOptionEntry_t* src, int count)
+{
+    for (int i = 0; i < count; ++i) {
+        dst[i] = src[i];
+        if (src[i].arg == 3)
+            dst[i].arg_data = findGOptionArgFct(src[i].arg_data);
+    }
+    dst[count] = src[count];
+}
+
 EXPORT void my_g_option_context_add_main_entries(x64emu_t* emu, void* context, my_GOptionEntry_t* entries, void* domain)
 {
-    my_GOptionEntry_t* p = entries;
-    int idx = 0;
-    while (p && p->long_name) {
-        // wrap Callbacks
-        ++p;
-        ++idx;
-    }
-    p = entries;
-    my_GOptionEntry_t my_entries[idx+1];
-    idx = 0;
-    while (p && p->long_name) {
-        // wrap Callbacks
-        my_entries[idx] = *p;
-        if (p->arg == 3)
-            my_entries[idx].arg_data = findGOptionArgFct(p->arg_data);
-        ++p;
-        ++idx;
-    }
-    if(p) my_entries[idx] = *p;
+    int count = countGOptionEntries(entries);
+    my_GOptionEntry_t my_entries[count+1];
+    if(entries)
+        wrapGOptionEntries(my_entries, entries, count);
     my->g_option_context_add_main_entries(context, entries?my_entries:NULL, domain);
+}
+
+EXPORT void my_g_option_group_add_entries(x64emu_t* emu, void* group, my_GOptionEntry_t* entries)
+{
+    int count = countGOptionEntries(entries);
+    my_GOptionEntry_t my_entries[count+1];
+    if(entries)
+        wrapGOptionEntries(my_entries, entries, count);
+    my->g_option_group_add_entries(group, entries?my_entries:NULL);
 }
 
 EXPORT void* my_g_strconcat(x64emu_t* emu, void* first, uintptr_t* data)

@@ -88,6 +88,10 @@ typedef enum flagcache_s {
 typedef struct callret_s callret_t;
 typedef struct sep_s sep_t;
 
+#define RSP_CLASS_BARRIER 0
+#define RSP_CLASS_PUSH    1
+#define RSP_CLASS_POP     2
+
 typedef struct instruction_la64_s {
     instruction_x64_t   x64;
     uintptr_t           address;    // (start) address of the arm emitted instruction
@@ -119,15 +123,29 @@ typedef struct instruction_la64_s {
     uint8_t             nat_flags_sign:1;
     uint8_t             nat_flags_sf:1;
     uint8_t             nat_flags_needsign:1;
+    uint8_t             nat_flags_needunsigned:1;
     uint8_t             no_scratch_usage : 1; // this opcode does not use scratch register
     uint8_t             nat_flags_op1;
     uint8_t             nat_flags_op2;
     uint8_t             x87precision:1; // this opcode can handle x87pc
+    uint8_t             unaligned:1; // this opcode can be re-generated for unaligned special case
     unsigned            mmx_used:1; // no fine tracking, just a global "any reg used"
     unsigned            x87_used:1; // no fine tracking, just a global "any reg used"
     unsigned            fpu_used:1; // any xmm/ymm/x87/mmx reg used
     unsigned            fpupurge:1;   // this opcode will purge all fpu regs
-    uint16_t            nat_next_inst;
+    uint16_t            nat_next_inst;  // for producer: first consumer; for consumer: next consumer
+    uint16_t            up32_read;       // bitmask of GPRs whose upper 32 bits are read by this instruction
+    uint16_t            up32_write64;    // bitmask of GPRs written as 64-bit by this instruction (upper 32 become defined)
+    uint16_t            up32_write32;    // bitmask of GPRs written as 32-bit by this instruction
+    uint16_t            up32_skip;       // bitmask of GPRs where the implicit zero-up after a 32-bit write can be skipped
+    uint16_t            up32_pending;    // bitmask of GPRs whose upper 32 bits are stale at entry to this instruction
+    int8_t              comis_fusion;
+    uint8_t             comis_mark:1;
+    uint8_t             host_call:1;
+    int16_t             rsp_entry;       // pending rsp offset at entry
+    int16_t             rsp_flush;       // rsp offset to emit right after this push/pop
+    uint8_t             rsp_merge : 1;   // this push/pop is emitted with merged rsp offset
+    uint8_t             rsp_class : 2;   // RSP_* of this opcode (marked by the opcode handler)
     flagcache_t         f_exit;     // flags status at end of instruction
     lsxcache_t          lsx;        // lsxcache at end of instruction (but before poping)
     flagcache_t         f_entry;    // flags status before the instruction begin
@@ -181,6 +199,7 @@ typedef struct dynarec_la64_s {
     uint8_t              is_file_mapped:1;
     void*                gdbjit_block;
     uint32_t             need_x87check; // x87 low precision check
+    int                  x87round_active; // we are in the middle of x87_setround and x87_restoreround
     uint32_t             need_dump;     // need to dump the block
     int                  need_reloc; // does the dynablock need relocations
     int                  reloc_size;
@@ -200,7 +219,37 @@ int Table64(dynarec_la64_t *dyn, uint64_t val, int pass);  // add a value to tab
 
 void CreateJmpNext(void* addr, void* next);
 
+// While we could theoretically traverse forward to find the flags-consuming x86
+// instruction and get the exact scratch registers to save, this is too complicated.
+// So we went with the simpler approach of saving all scratch registers, this won't
+// add noticeable performance overhead in trace mode.
+#define SPILL_NF_REGISTERS         \
+    do {                           \
+       ADDI_D(xSP, xSP, -64);      \
+       ST_D(x1, xSP, 0 * 8);       \
+       ST_D(x2, xSP, 1 * 8);       \
+       ST_D(x3, xSP, 2 * 8);       \
+       ST_D(x4, xSP, 3 * 8);       \
+       ST_D(x5, xSP, 4 * 8);       \
+       ST_D(x6, xSP, 5 * 8);       \
+       ST_D(x7, xSP, 6 * 8);       \
+    } while(0);
+
+#define RESTORE_NF_REGISTERS       \
+    do {                           \
+       LD_D(x1, xSP, 0 * 8);       \
+       LD_D(x2, xSP, 1 * 8);       \
+       LD_D(x3, xSP, 2 * 8);       \
+       LD_D(x4, xSP, 3 * 8);       \
+       LD_D(x5, xSP, 4 * 8);       \
+       LD_D(x6, xSP, 5 * 8);       \
+       LD_D(x7, xSP, 6 * 8);       \
+       ADDI_D(xSP, xSP, 64);       \
+    } while(0);
+
 #define GO_TRACE(A, B, s0)         \
+    if(cpuext.lbt)                 \
+        RESTORE_EFLAGS(s0);        \
     GETIP(addr, s0);               \
     MV(x1, xRIP);                  \
     STORE_XEMU_CALL();             \

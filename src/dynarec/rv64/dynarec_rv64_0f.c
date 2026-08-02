@@ -167,10 +167,24 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
         case 0x0D:
             nextop = F8;
             switch ((nextop >> 3) & 7) {
-                case 1:
-                    INST_NAME("PREFETCHW");
-                    // nop without Zicbom, Zicbop, Zicboz extensions
-                    FAKEED;
+                case 0:
+                    INST_NAME("PREFETCH");
+                    if (cpuext.zicbop) {
+                        addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 0, 0);
+                        CBO_PREFETCH_R(ed, 0);
+                    } else {
+                        FAKEED;
+                    }
+                    break;
+                case 1: // PREFETCHW
+                case 2: // PREFETCHWT1
+                    INST_NAME("PREFETCHWh");
+                    if (cpuext.zicbop) {
+                        addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 0, 0);
+                        CBO_PREFETCH_W(ed, 0);
+                    } else {
+                        FAKEED;
+                    }
                     break;
                 default: //???
                     DEFAULT;
@@ -278,7 +292,6 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 INST_NAME("MOVLHPS Gx,Ex");
             } else {
                 INST_NAME("MOVHPS Gx,Ex");
-                SMREAD();
             }
             GETGX();
             GETEX(x2, 0, 1);
@@ -302,11 +315,19 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             } else
                 switch ((nextop >> 3) & 7) {
                     case 0:
+                        INST_NAME("PREFETCHNTA Ed");
+                        FAKEED;
+                        break;
                     case 1:
                     case 2:
                     case 3:
                         INST_NAME("PREFETCHh Ed");
-                        FAKEED;
+                        if (cpuext.zicbop) {
+                            addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 0, 0);
+                            CBO_PREFETCH_R(ed, 0);
+                        } else {
+                            FAKEED;
+                        }
                         break;
                     default:
                         INST_NAME("NOP (multibyte)");
@@ -875,8 +896,8 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                     GETGD;
                     SMREAD();
                     addr = geted(dyn, addr, ninst, nextop, &wback, x2, x1, &fixedaddress, rex, NULL, 1, 0);
-                    REV8xw(x1, gd, x1, x2, x3, x4);
-                    SDxw(x1, wback, fixedaddress);
+                    REV8xw(x3, gd, x3, x4, x5, x6);
+                    SDxw(x3, wback, fixedaddress);
                     break;
                 default:
                     DEFAULT;
@@ -1109,11 +1130,23 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             s0 = fpu_get_scratch(dyn);
             s1 = fpu_get_scratch(dyn);
             for (int i = 0; i < 4; ++i) {
-                // GX->f[i] += EX->f[i];
                 FLW(s0, wback, fixedaddress + i * 4);
                 FLW(s1, gback, gdoffset + i * 4);
-                FADDS(s1, s1, s0);
-                FSW(s1, gback, gdoffset + i * 4);
+                if (!BOX64ENV(dynarec_fastnan)) {
+                    FEQS(x3, s0, s0);
+                    FEQS(x4, s1, s1);
+                    AND(x5, x3, x4);
+                    BEQZ(x5, 4 + 4 * 4);
+                }
+                FADDS(s0, s0, s1);
+                if (!BOX64ENV(dynarec_fastnan)) {
+                    FEQS(x5, s0, s0);
+                    BNEZ(x5, 4 + 4);
+                    FNEGS(s0, s0);
+                    BNEZ(x4, 4 + 4);
+                    FMVS(s0, s1);
+                }
+                FSW(s0, gback, gdoffset + i * 4);
             }
             break;
         case 0x59:
@@ -1130,14 +1163,16 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 if (!BOX64ENV(dynarec_fastnan)) {
                     FEQS(x3, s0, s0);
                     FEQS(x4, s1, s1);
+                    AND(x5, x3, x4);
+                    BEQZ(x5, 4 + 4 * 4);
                 }
                 FMULS(s0, s0, s1);
                 if (!BOX64ENV(dynarec_fastnan)) {
-                    AND(x3, x3, x4);
-                    BEQZ(x3, 16);
-                    FEQS(x3, s0, s0);
-                    BNEZ(x3, 8);
+                    FEQS(x5, s0, s0);
+                    BNEZ(x5, 4 + 4);
                     FNEGS(s0, s0);
+                    BNEZ(x4, 4 + 4);
+                    FMVS(s0, s1);
                 }
                 FSW(s0, gback, gdoffset + i * 4);
             }
@@ -1182,14 +1217,16 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 if (!BOX64ENV(dynarec_fastnan)) {
                     FEQS(x3, s0, s0);
                     FEQS(x4, s1, s1);
+                    AND(x5, x3, x4);
+                    BEQZ(x5, 4 + 4 * 4);
                 }
                 FSUBS(s0, s1, s0);
                 if (!BOX64ENV(dynarec_fastnan)) {
-                    AND(x3, x3, x4);
-                    BEQZ(x3, 16);
-                    FEQS(x3, s0, s0);
-                    BNEZ(x3, 8);
+                    FEQS(x5, s0, s0);
+                    BNEZ(x5, 4 + 4);
                     FNEGS(s0, s0);
+                    BNEZ(x4, 4 + 4);
+                    FMVS(s0, s1);
                 }
                 FSW(s0, gback, gdoffset + i * 4);
             }
@@ -1204,12 +1241,8 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             for (int i = 0; i < 4; ++i) {
                 FLW(s0, wback, fixedaddress + i * 4);
                 FLW(s1, gback, gdoffset + i * 4);
-                FEQS(x3, s0, s0);
-                FEQS(x4, s1, s1);
-                AND(x3, x3, x4);
-                BEQZ(x3, 12);
-                FLTS(x3, s0, s1);
-                BEQZ(x3, 8);
+                FLTS(x3, s1, s0);
+                BNEZ(x3, 8);
                 FSW(s0, gback, gdoffset + i * 4);
             }
             break;
@@ -1227,14 +1260,16 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 if (!BOX64ENV(dynarec_fastnan)) {
                     FEQS(x3, s0, s0);
                     FEQS(x4, s1, s1);
+                    AND(x5, x3, x4);
+                    BEQZ(x5, 4 + 4 * 4);
                 }
                 FDIVS(s0, s1, s0);
                 if (!BOX64ENV(dynarec_fastnan)) {
-                    AND(x3, x3, x4);
-                    BEQZ(x3, 16);
-                    FEQS(x3, s0, s0);
-                    BNEZ(x3, 8);
+                    FEQS(x5, s0, s0);
+                    BNEZ(x5, 4 + 4);
                     FNEGS(s0, s0);
+                    BNEZ(x4, 4 + 4);
+                    FMVS(s0, s1);
                 }
                 FSW(s0, gback, gdoffset + i * 4);
             }
@@ -1253,7 +1288,7 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 FEQS(x4, s1, s1);
                 AND(x3, x3, x4);
                 BEQZ(x3, 12);
-                FLTS(x3, s1, s0);
+                FLES(x3, s1, s0);
                 BEQZ(x3, 8);
                 FSW(s0, gback, gdoffset + i * 4);
             }
@@ -1891,9 +1926,11 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
         case 0xA5:
             nextop = F8;
             INST_NAME("SHLD Ed, Gd, CL");
-            SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION); // some flags are left undefined
-            if (BOX64DRENV(dynarec_safeflags) > 1)
-                MAYSETFLAGS();
+            if (BOX64DRENV(dynarec_safeflags) > 1) {
+                READFLAGS(X_ALL);
+                SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
+            } else
+                SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION); // some flags are left undefined
             GETGD;
             GETED(0);
             if (!rex.w && !rex.is32bits && MODREG) { ZEROUP(ed); }
@@ -1957,9 +1994,11 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
         case 0xAD:
             nextop = F8;
             INST_NAME("SHRD Ed, Gd, CL");
-            SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION);
-            if (BOX64DRENV(dynarec_safeflags) > 1)
-                MAYSETFLAGS();
+            if (BOX64DRENV(dynarec_safeflags) > 1) {
+                READFLAGS(X_ALL);
+                SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
+            } else
+                SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
             GETGD;
             GETED(0);
             if (!rex.w && !rex.is32bits && MODREG) { ZEROUP(ed); }
@@ -2077,7 +2116,7 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                         MESSAGE(LOG_DUMP, "Need Optimization\n");
                         fpu_purgecache(dyn, ninst, 0, x1, x2, x3);
                         addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 0, 0);
-                        MOV32w(x2, rex.w ? 0 : 1);
+                        MOV32w(x2, rex.is32bits);
                         CALL(const_fpu_xsave, -1, ed, x2);
                         break;
                     case 5:
@@ -2085,13 +2124,17 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                         MESSAGE(LOG_DUMP, "Need Optimization\n");
                         fpu_purgecache(dyn, ninst, 0, x1, x2, x3);
                         addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 0, 0);
-                        MOV32w(x2, rex.w ? 0 : 1);
+                        MOV32w(x2, rex.is32bits);
                         CALL(const_fpu_xrstor, -1, ed, x2);
                         break;
                     case 7:
                         INST_NAME("CLFLUSH Ed");
-                        FAKEED;
-                        // Placebo, TODO: we need Zicbom
+                        if (cpuext.zicbom) {
+                            addr = geted(dyn, addr, ninst, nextop, &ed, x1, x2, &fixedaddress, rex, NULL, 0, 0);
+                            CBO_FLUSH(ed);
+                        } else {
+                            FAKEED;
+                        }
                         SMDMB();
                         break;
                     default:
@@ -2348,7 +2391,7 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             if (!BOX64DRENV(dynarec_safeflags)) {
                 SETFLAGS(X_ZF, SF_SUBSET, NAT_FLAGS_NOFUSION);
             } else {
-                SETFLAGS(X_ALL, SF_SET, NAT_FLAGS_NOFUSION);
+                SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
             }
             SET_DFNONE();
             CLEAR_FLAGS();
@@ -2359,14 +2402,20 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 ZEXTW2(x4, ed);
                 ed = x4;
             }
+            if (BOX64DRENV(dynarec_safeflags)) {
+                IFX (X_PF) MV(x3, xZR);
+            }
             BNE_MARK(ed, xZR);
             IFX (X_ZF) ORI(xFlags, xFlags, 1 << F_ZF);
             B_MARK2_nocond;
             MARK;
             CTZxw(gd, ed, rex.w, x3, x5);
+            if (BOX64DRENV(dynarec_safeflags)) {
+                IFX (X_PF) MV(x3, gd);
+            }
             MARK2;
             if (BOX64DRENV(dynarec_safeflags)) {
-                IFX (X_PF) emit_pf(dyn, ninst, gd, x2, x5);
+                IFX (X_PF) emit_pf(dyn, ninst, x3, x2, x5);
             }
             break;
         case 0xBD:
@@ -2374,7 +2423,7 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             if (!BOX64DRENV(dynarec_safeflags)) {
                 SETFLAGS(X_ZF, SF_SUBSET, NAT_FLAGS_NOFUSION);
             } else {
-                SETFLAGS(X_ALL, SF_SET, NAT_FLAGS_NOFUSION);
+                SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
             }
             SET_DFNONE();
             CLEAR_FLAGS();
@@ -2384,6 +2433,9 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             if (!rex.w && MODREG) {
                 ZEXTW2(x4, ed);
                 ed = x4;
+            }
+            if (BOX64DRENV(dynarec_safeflags)) {
+                IFX (X_PF) MV(x2, xZR);
             }
             BNE_MARK(ed, xZR);
             IFX (X_ZF) ORI(xFlags, xFlags, 1 << F_ZF);
@@ -2392,9 +2444,12 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
             CLZxw(gd, ed, rex.w, x3, x5, x7);
             ADDI(x3, xZR, rex.w ? 63 : 31);
             SUB(gd, x3, gd);
+            if (BOX64DRENV(dynarec_safeflags)) {
+                IFX (X_PF) MV(x2, gd);
+            }
             MARK2;
             if (BOX64DRENV(dynarec_safeflags)) {
-                IFX (X_PF) emit_pf(dyn, ninst, gd, x2, x5);
+                IFX (X_PF) emit_pf(dyn, ninst, x2, x4, x5);
             }
             break;
         case 0xBE:
@@ -2579,6 +2634,32 @@ uintptr_t dynarec64_0F(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int ni
                 }
             } else {
                 switch ((nextop >> 3) & 7) {
+                    case 1:
+                        if (rex.w) {
+                            DEFAULT;
+                        } else {
+                            INST_NAME("CMPXCHG8B Gq, Eq");
+                            SETFLAGS(X_ZF, SF_SUBSET, NAT_FLAGS_NOFUSION);
+                            SMREAD();
+                            addr = geted(dyn, addr, ninst, nextop, &wback, x1, x2, &fixedaddress, rex, NULL, 0, 0);
+                            ANDI(xFlags, xFlags, ~(1 << F_ZF));
+                            ZEXTW2(x3, xRAX);
+                            SLLI(x2, xRDX, 32);
+                            OR(x3, x3, x2); // x3 is edx:eax
+                            LD(x2, wback, fixedaddress);
+                            BNE_MARK(x2, x3);
+                            ZEXTW2(x4, xRBX);
+                            SLLI(x5, xRCX, 32);
+                            OR(x4, x4, x5); // x4 is ecx:ebx
+                            SD(x4, wback, fixedaddress);
+                            SMWRITE();
+                            ORI(xFlags, xFlags, 1 << F_ZF);
+                            B_NEXT_nocond;
+                            MARK;
+                            SRLI(xRDX, x2, 32);
+                            ZEXTW2(xRAX, x2);
+                        }
+                        break;
                     case 4:
                         INST_NAME("Unsupported XSAVEC Ed");
                         FAKEED;

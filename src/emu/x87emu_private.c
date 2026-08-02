@@ -13,6 +13,7 @@
 
 void fpu_do_free(x64emu_t* emu, int i)
 {
+    fpu_ld80_clear(emu, i);
     emu->fpu_tags |= 0b11 << (i*2);   // empty
     // check if all empty
     if(emu->fpu_tags != TAGS_EMPTY)
@@ -24,38 +25,28 @@ void reset_fpu(x64emu_t* emu)
 {
     memset(emu->x87, 0, sizeof(emu->x87));
     memset(emu->fpu_ld, 0, sizeof(emu->fpu_ld));
+    emu->top = 0;
+    for(int i=0; i<8; ++i)
+        fpu_ld80_clear(emu, i);
     emu->cw.x16 = 0x37F;
     emu->sw.x16 = 0x0000;
-    emu->top = 0;
     emu->fpu_stack = 0;
     emu->fpu_tags = TAGS_EMPTY;
 }
 
 void fpu_fbst(x64emu_t* emu, uint8_t* d) {
-    // very aproximative... but should not be much used...
-    uint8_t p;
-    uint8_t sign = 0x00;
-    double tmp, v = ST0.d;
-    if(ST0.d<0.0) 
-    {
-        sign = 0x80;
-        v = -v;
+    uint64_t tmp = 0;
+    uint8_t sign = signbit(ST0.d) ? 0x80 : 0x00;
+    double v = fpu_round(emu, ST0.d);
+    if (isfinite(v))
+        tmp = llabs((int64_t)v);
+    memset(d, 0, 10);
+    for (int i = 0; i < 9 && tmp; ++i) {
+        uint8_t digit = tmp % 100;
+        d[i] = ((digit / 10) << 4) | (digit % 10);
+        tmp /= 100;
     }
-    for (int i=0; i<9; ++i) {
-        tmp = floor(v/10.0);
-        p = (v - 10.0*tmp);
-        v = tmp;
-        tmp = floor(v/10.0);
-        p |= ((uint8_t)(v - 10.0*tmp))<<4;
-        v = tmp;
-
-        *(d++)=p;
-    }
-    tmp = floor(v/10.0);
-    p = (v - 10.0*tmp);
-    p |= sign;
-    *(d++)=p;
-    // no flags....
+    d[9] = sign;
 }
 
 void fpu_fbld(x64emu_t* emu, uint8_t* s) {
@@ -70,8 +61,7 @@ void fpu_fbld(x64emu_t* emu, uint8_t* s) {
         m *= 10;
     }
     ST0.d = tmp;
-    p =*(s++);
-    ST0.d += m * (p&0x0f);
+    p = *(s++);
     if(p&0x80)
         ST0.d = -ST0.d;
 }
@@ -258,6 +248,50 @@ long double LD2localLD(void* ld)
     return *(long double*)ld;
 }
 #endif
+
+const char* PrintLD(void* ld, const char* prefix)
+{
+    #pragma pack(push, 1)
+    struct {
+        FPU_t f;
+        int16_t b;
+    } val;
+    #pragma pack(pop)
+    memcpy(&val, ld, 10);
+    static char buf[64];
+    snprintf(buf, sizeof(buf), "%s%04x %016llx", prefix?prefix:"", val.b, val.f.q);
+    return buf;
+}
+
+int full_ld_fprem(x64emu_t* emu)
+{
+    #pragma pack(push, 1)
+    struct {
+        FPU_t f;
+        int16_t b;
+    } a;
+    struct {
+        FPU_t f;
+        int16_t b;
+    } b;
+    #pragma pack(pop)
+    memcpy(&a, &STld(0).ld, sizeof(a));
+    memcpy(&b, &STld(1).ld, sizeof(b));
+    if((a.b&0x8000) || (b.b&0x8000))
+        return 0;   // one value is negative, abort (not that if both values are engative, it should be doable, but not handled for now)
+    if((a.b==0x7fff) || (b.b==0x7fff))
+        return 0;   // one value is inf or nan, abort
+    if(!a.b || !b.b)
+        return 0;   // one value is denormal, abort
+    if((a.b<BIAS80) || (b.b<BIAS80) ||  (a.b>=b.b))
+        return 0;   // only case corectly computed is when a mod b = a becasue b is bigger than a, and the value is big already
+    //ST0 will not change in that case...
+    emu->sw.f.F87_C2 = 0;
+    emu->sw.f.F87_C1 = a.f.q & 1;
+    emu->sw.f.F87_C3 = (a.f.q >> 1) & 1;
+    emu->sw.f.F87_C0 = (a.f.q >> 2) & 1;
+    return 1;
+}
 
 void fpu_loadenv(x64emu_t* emu, char* p, int b16)
 {

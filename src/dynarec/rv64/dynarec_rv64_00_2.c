@@ -600,7 +600,7 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             break;
         case 0x9D:
             INST_NAME("POPF");
-            SETFLAGS(X_ALL, SF_SET, NAT_FLAGS_NOFUSION);
+            SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
             POP1z(xFlags);
             FLAGS_ADJUST_FROM11(xFlags, xFlags, x2);
             MOV32w(x1, 0x3E7FF7);
@@ -711,6 +711,10 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             if (rex.rep) {
                 INST_NAME("REP MOVSB");
                 CBZ_NEXT(xRCX);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRSI);
+                    ZEROUP(xRDI);
+                }
                 ANDI(x1, xFlags, 1 << F_DF);
                 BNEZ_MARK2(x1);
                 if (BOX64DRENV(dynarec_safeflags)) {
@@ -751,6 +755,10 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             } else {
                 INST_NAME("MOVSB");
                 GETDIR(x3, x1, 1);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRSI);
+                    ZEROUP(xRDI);
+                }
                 LBU(x1, xRSI, 0);
                 SB(x1, xRDI, 0);
                 ADD(xRSI, xRSI, x3);
@@ -762,6 +770,10 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             if (rex.rep) {
                 INST_NAME("REP MOVSD");
                 CBZ_NEXT(xRCX);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRSI);
+                    ZEROUP(xRDI);
+                }
                 ANDI(x1, xFlags, 1 << F_DF);
                 BNEZ_MARK2(x1);
                 MARK; // Part with DF==0
@@ -784,6 +796,10 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             } else {
                 INST_NAME("MOVSD");
                 GETDIR(x3, x1, rex.w ? 8 : 4);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRSI);
+                    ZEROUP(xRDI);
+                }
                 LDxw(x1, xRSI, 0);
                 SDxw(x1, xRDI, 0);
                 ADD(xRSI, xRSI, x3);
@@ -800,9 +816,16 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     } else {
                         INST_NAME("REPZ CMPSB");
                     }
-                    MAYSETFLAGS();
-                    SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
+                    if (BOX64DRENV(dynarec_safeflags) > 1) {
+                        READFLAGS(X_ALL);
+                        SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
+                    } else
+                        SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
                     CBZ_NEXT(xRCX);
+                    if (rex.is67 && !rex.is32bits) {
+                        ZEROUP(xRSI);
+                        ZEROUP(xRDI);
+                    }
                     ANDI(x1, xFlags, 1 << F_DF);
                     BNEZ_MARK2(x1);
                     MARK; // Part with DF==0
@@ -837,6 +860,10 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     INST_NAME("CMPSB");
                     SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_FUSION);
                     GETDIR(x3, x1, 1);
+                    if (rex.is67 && !rex.is32bits) {
+                        ZEROUP(xRSI);
+                        ZEROUP(xRDI);
+                    }
                     LBU(x1, xRSI, 0);
                     LBU(x2, xRDI, 0);
                     ADD(xRSI, xRSI, x3);
@@ -854,9 +881,16 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     } else {
                         INST_NAME("REPZ CMPSD");
                     }
-                    MAYSETFLAGS();
-                    SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
+                    if (BOX64DRENV(dynarec_safeflags) > 1) {
+                        READFLAGS(X_ALL);
+                        SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
+                    } else
+                        SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
                     CBZ_NEXT(xRCX);
+                    if (rex.is67 && !rex.is32bits) {
+                        ZEROUP(xRSI);
+                        ZEROUP(xRDI);
+                    }
                     ANDI(x1, xFlags, 1 << F_DF);
                     BNEZ_MARK2(x1);
                     MARK; // Part with DF==0
@@ -891,6 +925,10 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     INST_NAME("CMPSD");
                     SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
                     GETDIR(x3, x1, rex.w ? 8 : 4);
+                    if (rex.is67 && !rex.is32bits) {
+                        ZEROUP(xRSI);
+                        ZEROUP(xRDI);
+                    }
                     LDxw(x1, xRSI, 0);
                     LDxw(x2, xRDI, 0);
                     ADD(xRSI, xRSI, x3);
@@ -917,6 +955,9 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             if (rex.rep) {
                 INST_NAME("REP STOSB");
                 CBZ_NEXT(xRCX);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRDI);
+                }
                 ANDI(x1, xFlags, 1 << F_DF);
                 BNEZ_MARK2(x1);
                 MARK; // Part with DF==0
@@ -934,6 +975,9 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             } else {
                 INST_NAME("STOSB");
                 GETDIR(x3, x1, 1);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRDI);
+                }
                 SB(xRAX, xRDI, 0);
                 ADD(xRDI, xRDI, x3);
             }
@@ -942,6 +986,9 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             if (rex.rep) {
                 INST_NAME("REP STOSD");
                 CBZ_NEXT(xRCX);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRDI);
+                }
                 ANDI(x1, xFlags, 1 << F_DF);
                 BNEZ_MARK2(x1);
                 MARK; // Part with DF==0
@@ -959,6 +1006,9 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             } else {
                 INST_NAME("STOSD");
                 GETDIR(x3, x1, rex.w ? 8 : 4);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRDI);
+                }
                 SDxw(xRAX, xRDI, 0);
                 ADD(xRDI, xRDI, x3);
             }
@@ -969,6 +1019,9 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             } else {
                 INST_NAME("LODSB");
                 GETDIR(x1, x2, 1);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRSI);
+                }
                 LBU(x2, xRSI, 0);
                 ADD(xRSI, xRSI, x1);
                 ANDI(xRAX, xRAX, ~0xff);
@@ -981,6 +1034,9 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
             } else {
                 INST_NAME("LODSD");
                 GETDIR(x1, x2, rex.w ? 8 : 4);
+                if (rex.is67 && !rex.is32bits) {
+                    ZEROUP(xRSI);
+                }
                 LDxw(xRAX, xRSI, 0);
                 ADD(xRSI, xRSI, x1);
             }
@@ -994,10 +1050,16 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     } else {
                         INST_NAME("REPZ SCASB");
                     }
-                    MAYSETFLAGS();
-                    SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
+                    if (BOX64DRENV(dynarec_safeflags) > 1) {
+                        READFLAGS(X_ALL);
+                        SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
+                    } else
+                        SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
                     CBZ_NEXT(xRCX);
                     ANDI(x1, xRAX, 0xff);
+                    if (rex.is67 && !rex.is32bits) {
+                        ZEROUP(xRDI);
+                    }
                     ANDI(x2, xFlags, 1 << F_DF);
                     BNEZ_MARK2(x2);
                     MARK; // Part with DF==0
@@ -1029,6 +1091,9 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
                     GETDIR(x3, x1, 1);
                     ANDI(x1, xRAX, 0xff);
+                    if (rex.is67 && !rex.is32bits) {
+                        ZEROUP(xRDI);
+                    }
                     LBU(x2, xRDI, 0);
                     ADD(xRDI, xRDI, x3);
                     emit_cmp8(dyn, ninst, x1, x2, x3, x4, x5, x6);
@@ -1044,13 +1109,19 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     } else {
                         INST_NAME("REPZ SCASD");
                     }
-                    MAYSETFLAGS();
-                    SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
+                    if (BOX64DRENV(dynarec_safeflags) > 1) {
+                        READFLAGS(X_ALL);
+                        SETFLAGS(X_ALL, SF_SET_NODF, NAT_FLAGS_NOFUSION);
+                    } else
+                        SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
                     CBZ_NEXT(xRCX);
                     if (rex.w) {
                         MV(x1, xRAX);
                     } else {
                         ZEXTW2(x1, xRAX);
+                    }
+                    if (rex.is67 && !rex.is32bits) {
+                        ZEROUP(xRDI);
                     }
                     ANDI(x2, xFlags, 1 << F_DF);
                     BNEZ_MARK2(x2);
@@ -1082,6 +1153,9 @@ uintptr_t dynarec64_00_2(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t ip, int 
                     INST_NAME("SCASD");
                     SETFLAGS(X_ALL, SF_SET_PENDING, NAT_FLAGS_NOFUSION);
                     GETDIR(x3, x1, rex.w ? 8 : 4);
+                    if (rex.is67 && !rex.is32bits) {
+                        ZEROUP(xRDI);
+                    }
                     LDxw(x2, xRDI, 0);
                     ADD(xRDI, xRDI, x3);
                     emit_cmp32(dyn, ninst, rex, xRAX, x2, x3, x4, x5, x6);

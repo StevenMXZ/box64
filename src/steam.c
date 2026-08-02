@@ -142,26 +142,6 @@ void pressure_vessel(int argc, const char** argv, int nextarg, const char* prog)
                 }
             }
             strcat(sniper, "/../../");
-            #ifdef ARM64
-            if(!getenv("BOX64_PYTHON3"))
-            {
-                // find python3 binary
-                glob_t g = {0};
-                char tmp[MAX_PATH] = {0};
-                snprintf(tmp, sizeof(tmp), "%svar/*/usr/bin/python3", sniper);
-                if(!glob(tmp, 0, NULL, &g)) {
-                    int found = 0;
-                    for(ulong_t i=0; i<g.gl_pathc && !found; ++i) {
-                        if(FileIsX64ELF(g.gl_pathv[i])) {
-                            found = 1;
-                            setenv("BOX64_PYTHON3", g.gl_pathv[i], 1);
-                            printf_log(LOG_DEBUG, "Found x86_64 python3 binary!");
-                        }
-                    }
-                    globfree(&g);
-                }
-            }
-            #endif
             strcat(sniper, runtime);
         } else {
             printf_log(LOG_INFO, "Warning, could not guess sniper runtime path\n");
@@ -170,26 +150,6 @@ void pressure_vessel(int argc, const char** argv, int nextarg, const char* prog)
         printf_log(LOG_DEBUG, "pressure-vessel sniper env: %s\n", sniper);
         // TODO: read metadata from sniper folder and analyse [Environment] section
         strcat(sniper, "/files");  // this is the sniper root
-        #ifdef ARM64
-        if(!getenv("BOX64_PYTHON3"))
-        {
-            // find python3 binary
-            glob_t g = {0};
-            char tmp[MAX_PATH] = {0};
-            snprintf(tmp, sizeof(tmp), "%s/bin/python3*", sniper);
-            if(!glob(tmp, 0, NULL, &g)) {
-                int found = 0;
-                for(ulong_t i=0; i<g.gl_pathc && !found; ++i) {
-                    if(FileIsX64ELF(g.gl_pathv[i])) {
-                        found = 1;
-                        setenv("BOX64_PYTHON3", g.gl_pathv[i], 1);
-                        printf_log(LOG_DEBUG, "Found x86_64 python3 binary!");
-                    }
-                }
-                globfree(&g);
-            }
-        }
-        #endif
         // do LD_LIBRARY_PATH
         {
             char tmp[MAX_PATH] = {0};
@@ -263,10 +223,11 @@ void pressure_vessel(int argc, const char** argv, int nextarg, const char* prog)
     int x86 = my_context->box86path?FileIsX86ELF(argv[nextarg]):0;
     int x64 = my_context->box64path?FileIsX64ELF(argv[nextarg]):0;
     int sh = my_context->bashpath?FileIsShell(argv[nextarg]):0;
+    int python = my_context->pythonpath?FileIsPython(argv[nextarg]):0;
     // create the new argv array
-    const char** newargv = (const char**)box_calloc((argc-nextarg)+1+((x86 || x64)?1:(sh?2:0)), sizeof(char*));
-    if(x86 || x64 || sh) {
-        newargv[0] = x86?my_context->box86path:my_context->box64path;
+    const char** newargv = (const char**)box_calloc((argc-nextarg)+1+((x86 || x64 || python)?1:(sh?2:0)), sizeof(char*));
+    if(x86 || x64 || sh || python) {
+        newargv[0] = x86?my_context->box86path:(python?my_context->pythonpath:my_context->box64path);
         printf_log(LOG_DEBUG, "argv[%d]=\"%s\"\n", 0, newargv[0]);
         if(sh) {
             newargv[1] = my_context->bashpath;

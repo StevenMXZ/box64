@@ -80,6 +80,11 @@ void native_fxtract(x64emu_t* emu)
 }
 void native_fprem(x64emu_t* emu)
 {
+    if(STld(0).uref==ST0.q && STld(1).uref==ST1.q) {
+        // try a full precision fpre alternative
+        if(full_ld_fprem(emu))
+            return;
+    }
     double x = ST0.d, y = ST1.d;
     int64_t q = 0;
     if (isnan(x) || isnan(y)) {
@@ -93,14 +98,18 @@ void native_fprem(x64emu_t* emu)
         q = 0;
     } else {
 #if defined(_WIN32) || defined(__MINGW32__)
-        q = (int64_t)trunc(x / y);
-        ST0.d = x - (y * q);
+        if(isinf(y))
+            q = 0;
+        else {
+            q = (int64_t)trunc(x / y);
+            ST0.d = x - (y * q);
+        }
 #else
         ST0.d = fmod(x, y);
         q = (int64_t)trunc(x / y);
 #endif
     }
-    q &= 7;
+    //q &= 7;   //why forcing all low bits (and so C0, C1 & C3) to 1?
     emu->sw.f.F87_C2 = 0;
     emu->sw.f.F87_C1 = q & 1;
     emu->sw.f.F87_C3 = (q >> 1) & 1;
@@ -291,7 +300,7 @@ void native_fsave(x64emu_t* emu, uint8_t* ed)
     uint8_t* p = ed;
     p += 28;
     for (int i=0; i<8; ++i) {
-        LD2D(p, &emu->x87[7-i].d);
+        LD2D(p, &ST(i).d);
         p+=10;
     }
     reset_fpu(emu);
@@ -303,7 +312,7 @@ void native_fsave16(x64emu_t* emu, uint8_t* ed)
     uint8_t* p = ed;
     p += 14;
     for (int i=0; i<8; ++i) {
-        LD2D(p, &emu->x87[7-i].d);
+        LD2D(p, &ST(i).d);
         p+=10;
     }
     reset_fpu(emu);
@@ -315,7 +324,7 @@ void native_frstor(x64emu_t* emu, uint8_t* ed)
     uint8_t* p = ed;
     p += 28;
     for (int i=0; i<8; ++i) {
-        D2LD(&emu->x87[7-i].d, p);
+        D2LD(&ST(i).d, p);
         p+=10;
     }
 
@@ -327,7 +336,7 @@ void native_frstor16(x64emu_t* emu, uint8_t* ed)
     uint8_t* p = ed;
     p += 14;
     for (int i=0; i<8; ++i) {
-        D2LD(&emu->x87[7-i].d, p);
+        D2LD(&ST(i).d, p);
         p+=10;
     }
 
@@ -346,13 +355,17 @@ void native_fprem1(x64emu_t* emu)
         ST0.d = NAN;
     } else {
 #if defined(_WIN32) || defined(__MINGW32__)
-        q = (int)round(x / y);
-        ST0.d = x - (y * q);
+        if(isinf(y))
+            q = 0;
+        else {
+            q = (int)round(x / y);
+            ST0.d = x - (y * q);
+        }
 #else
         ST0.d = remquo(x, y, &q);
 #endif
     }
-    q &= 7;
+    //q &= 7;   //why forcing all low bits (and so C0, C1 & C3) to 1?
     emu->sw.f.F87_C2 = 0;
     emu->sw.f.F87_C1 = q & 1;
     emu->sw.f.F87_C3 = (q >> 1) & 1;
@@ -704,51 +717,67 @@ void native_aeskeygenassist(x64emu_t* emu, int gx, int ex, void* p, uint32_t u8)
     GX->ud[3] ^= u8;
 }
 
+static inline __int128 pclmul_4bit(uint64_t a, uint64_t b)
+{
+    __uint128_t result = 0;
+    __uint128_t op2 = b;
+    __uint128_t table[16];
+    table[0] = 0;
+    table[1] = op2;
+    table[2] = op2 << 1;
+    table[3] = table[2] ^ table[1];
+    table[4] = op2 << 2;
+    table[5] = table[4] ^ table[1];
+    table[6] = table[4] ^ table[2];
+    table[7] = table[6] ^ table[1];
+    table[8] = op2 << 3;
+    table[9] = table[8] ^ table[1];
+    table[10] = table[8] ^ table[2];
+    table[11] = table[10] ^ table[1];
+    table[12] = table[8] ^ table[4];
+    table[13] = table[12] ^ table[1];
+    table[14] = table[12] ^ table[2];
+    table[15] = table[14] ^ table[1];
+
+    for (int i = 0; i < 16; ++i) {
+        result ^= table[(a >> (i * 4)) & 0xf] << (i * 4);
+    }
+    return (__int128)result;
+}
+
 void native_pclmul(x64emu_t* emu, int gx, int ex, void* p, uint32_t u8)
 {
-    sse_regs_t *EX = p?((sse_regs_t*)p):&emu->xmm[ex];
-    sse_regs_t *GX = &emu->xmm[gx];
-    int g = (u8&1)?1:0;
-    int e = (u8&0b10000)?1:0;
-    __int128 result = 0;
-    __int128 op2 = EX->q[e];
-    for (int i=0; i<64; ++i)
-        if(GX->q[g]&(1LL<<i))
-            result ^= (op2<<i);
-    GX->u128 = result;
+    sse_regs_t* EX = p ? ((sse_regs_t*)p) : &emu->xmm[ex];
+    sse_regs_t* GX = &emu->xmm[gx];
+    int g = (u8 & 1) ? 1 : 0;
+    int e = (u8 & 0b10000) ? 1 : 0;
+
+    GX->u128 = pclmul_4bit(GX->q[g], EX->q[e]);
 }
+
 void native_pclmul_x(x64emu_t* emu, int gx, int vx, void* p, uint32_t u8)
 {
+    sse_regs_t* EX = ((uintptr_t)p > 15) ? (sse_regs_t*)p : &emu->xmm[(uintptr_t)p];
+    sse_regs_t* GX = &emu->xmm[gx];
+    sse_regs_t* VX = &emu->xmm[vx];
+    int g = (u8 & 1) ? 1 : 0;
+    int e = (u8 & 0b10000) ? 1 : 0;
 
-    sse_regs_t *EX = ((uintptr_t)p>15)?((sse_regs_t*)p):&emu->xmm[(uintptr_t)p];
-    sse_regs_t *GX = &emu->xmm[gx];
-    sse_regs_t *VX = &emu->xmm[vx];
-    int g = (u8&1)?1:0;
-    int e = (u8&0b10000)?1:0;
-    __int128 result = 0;
-    __int128 op2 = EX->q[e];
-    for (int i=0; i<64; ++i)
-        if(VX->q[g]&(1LL<<i))
-            result ^= (op2<<i);
-
-    GX->u128 = result;
+    GX->u128 = pclmul_4bit(VX->q[g], EX->q[e]);
 }
+
 void native_pclmul_y(x64emu_t* emu, int gy, int vy, void* p, uint32_t u8)
 {
-    //compute both low and high values
     native_pclmul_x(emu, gy, vy, p, u8);
-    sse_regs_t *EY = ((uintptr_t)p>15)?((sse_regs_t*)(p+16)):&emu->ymm[(uintptr_t)p];
-    sse_regs_t *GY = &emu->ymm[gy];
-    sse_regs_t *VY = &emu->ymm[vy];
-    int g = (u8&1)?1:0;
-    int e = (u8&0b10000)?1:0;
-    __int128 result = 0;
-    __int128 op2 = EY->q[e];
-    for (int i=0; i<64; ++i)
-        if(VY->q[g]&(1LL<<i))
-            result ^= (op2<<i);
 
-    GY->u128 = result;
+    sse_regs_t* EY = ((uintptr_t)p > 15) ? (sse_regs_t*)((char*)p + 16)
+                                         : &emu->ymm[(uintptr_t)p];
+    sse_regs_t* GY = &emu->ymm[gy];
+    sse_regs_t* VY = &emu->ymm[vy];
+    int g = (u8 & 1) ? 1 : 0;
+    int e = (u8 & 0b10000) ? 1 : 0;
+
+    GY->u128 = pclmul_4bit(VY->q[g], EY->q[e]);
 }
 
 static int flagsCacheNeedsTransform(dynarec_native_t* dyn, int ninst) {

@@ -48,6 +48,12 @@
 #include "../tools/bridge_private.h"
 #include "x64tls.h"
 
+#ifndef STATICBUILD
+void startMallocHook();
+#else
+void startMallocHook() {}
+#endif
+
 void* my__IO_2_1_stderr_ = (void*)1;
 void* my__IO_2_1_stdin_  = (void*)2;
 void* my__IO_2_1_stdout_ = (void*)3;
@@ -107,6 +113,21 @@ void FreeElfHeader(elfheader_t** head)
     actual_free(h);
 
     *head = NULL;
+}
+
+int hasElfInterp(elfheader_t* head)
+{
+    if(!head) return 0;
+    if(box64_is32bits) {
+        for (size_t i=0; i<head->numPHEntries; ++i)
+            if(head->PHEntries._32[i].p_type == PT_INTERP)
+                return 1;
+    } else {
+        for (size_t i=0; i<head->numPHEntries; ++i)
+            if(head->PHEntries._64[i].p_type == PT_INTERP)
+                return 1;
+    }
+    return 0;
 }
 
 int CalcLoadAddr(elfheader_t* head)
@@ -843,6 +864,13 @@ static int RelocateElfRELA(lib_t *maplib, lib_t *local_maplib, int bindnow, int 
                         tlsdescUndefweak = AddBridge(my_context->system, pFE, my__dl_tlsdesc_undefweak, 0, "_dl_tlsdesc_undefweak");
                     td->entry = tlsdescUndefweak;
                     td->arg = (uintptr_t)(head->tlsbase + rela[i].r_addend);
+                } if(symname && sym_elf && elfsym) {
+                    printf_dump(LOG_NEVER, "Apply %s R_X86_64_TLSDESC @%p for %s with addend=%zu\n", BindSym(bind), p, symname, rela[i].r_addend);
+                    struct tlsdesc volatile *td = (struct tlsdesc volatile *)p;
+                    if(!tlsdescUndefweak)
+                        tlsdescUndefweak = AddBridge(my_context->system, pFE, my__dl_tlsdesc_undefweak, 0, "_dl_tlsdesc_undefweak");
+                    td->entry = tlsdescUndefweak;
+                    td->arg = (uintptr_t)(sym_elf->tlsbase + offs + rela[i].r_addend);
                 } else {
                     printf_log(LOG_INFO, "Warning, R_X86_64_TLSDESC used with Symbol %s(%p) not supported for now \n", symname, sym);
                 }
@@ -1209,16 +1237,21 @@ void RefreshElfTLS(elfheader_t* h, x64emu_t* emu)
         }
     }
 }
+
+void MallocHookRun(elfheader_t* h)
+{
+    if (!h)
+        return;
+    if(h->malloc_hook_2)
+        startMallocHook();
+}
+
 void MarkElfInitDone(elfheader_t* h)
 {
     if(h)
         h->init_done = 1;
 }
-#ifndef STATICBUILD
-void startMallocHook();
-#else
-void startMallocHook() {}
-#endif
+
 void RunElfInit(elfheader_t* h, x64emu_t *emu)
 {
     if(!h || h->init_done)
@@ -2100,7 +2133,7 @@ EXPORT void PltResolver64(x64emu_t* emu)
             GetGlobalSymbolStartEnd(local_maplib, symname, &offs, &end, h, version, vername, veropt, (void**)&elfsym);
     }
     if (!offs) {
-        printf_log(LOG_NONE, "Error: PltResolver: Symbol %s %s(%sver %d: %s%s%s) not found, cannot apply R_X86_64_JUMP_SLOT %p in %s (local_maplib=%p, global maplib=%p, deepbind=%d)\n", (bind==STB_LOCAL)?"Local":((bind==STB_WEAK)?"Weak":""), symname, veropt?"opt":"", version, symname, vername?"@":"", vername?vername:"", p, (h && h->name)?h->name:"???", local_maplib, my_context->maplib, deepbind);
+        printf_log(LOG_NONE, "Error: PltResolver: Symbol %s%s(%sver %d: %s%s%s) not found, cannot apply R_X86_64_JUMP_SLOT %p in %s (local_maplib=%p, global maplib=%p, deepbind=%d)\n", (bind==STB_LOCAL)?"Local ":((bind==STB_WEAK)?"Weak ":""), symname, veropt?"opt":"", version, symname, vername?"@":"", vername?vername:"", p, (h && h->name)?h->name:"???", local_maplib, my_context->maplib, deepbind);
         emu->quit = 1;
         R_RIP = 0; //stop....
         return;

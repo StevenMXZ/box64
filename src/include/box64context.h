@@ -121,7 +121,7 @@ typedef struct box64context_s {
     char*               box64path;      // path of current box64 executable
     char*               box86path;      // path of box86 executable (if present)
     char*               bashpath;       // path of x86_64 bash (defined with BOX64_BASH or by running bash directly)
-    char*               pythonpath;     // path of x86_64 python3 (defined with BOX64_PYTHON3)
+    char*               pythonpath;     // path of python helper (defined with BOX64_PYTHON3 or box64-python)
 
     uint64_t            stacksz;
     size_t              stackalign;
@@ -183,12 +183,16 @@ typedef struct box64context_s {
     #endif
     uintptr_t           max_db_size;    // the biggest (in x86_64 instructions bytes) built dynablock
     rbtree_t*             db_sizes;
+#define DB_ZOMBIE_SIZE 64
+    struct dynablock_s* db_zombie[DB_ZOMBIE_SIZE];  // ring queue of invalidated blocks pending free
+    int                 db_zombie_head;   // next write slot (also the oldest slot when full)
+    int                 db_zombie_count;  // number of entries currently queued
     int                 trace_dynarec;
     pthread_mutex_t     mutex_lock;     // this is for the Test interpreter
-    #if defined(__riscv) || defined(__loongarch64) || defined(__powerpc64__)
+#if defined(__riscv) || defined(__loongarch64) || defined(__powerpc64__)
     uint32_t            mutex_16b;
-    #endif
-    #endif
+#endif
+#endif
 
     library_t           *libclib;       // shortcut to libc library (if loaded, so probably yes)
     library_t           *sdl1mixerlib;
@@ -283,6 +287,7 @@ int AddTLSPartition(box64context_t* context, int tlssize);
 // defined in fact in threads.c
 void thread_set_emu(x64emu_t* emu);
 void thread_forget_emu();
+x64emu_t* thread_get_emu_no_create(void);
 x64emu_t* thread_get_emu(void);
 
 // relock the muxtex that were unlocked

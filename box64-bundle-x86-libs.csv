@@ -2,6 +2,12 @@ https://archive.debian.org/debian/pool/main/c/curl/libcurl3-gnutls_7.74.0-1.3+de
 https://archive.debian.org/debian/pool/main/c/curl/libcurl3-gnutls_7.74.0-1.3+deb11u7~bpo11+1_i386.deb,625e5189304d4d3bfb27cb821e257816c5ce761b1696b5da5ca4fa1035c48463
 https://archive.debian.org/debian/pool/main/o/openssl/libssl1.0.0_1.0.2l-1~bpo8+1_amd64.deb,6e85968afe1a6643f4e82e1cc168f848c5967a131bb1c7392f11974953db0e67
 https://archive.debian.org/debian/pool/main/o/openssl/libssl1.0.0_1.0.2l-1~bpo8+1_i386.deb,4e8b924286a064c257ca50b8ecd44fe71226443daef62b6836010590e2157329
+https://archive.debian.org/debian/pool/main/p/pipewire/libpipewire-0.3-0_0.3.65-2~bpo11+1_amd64.deb,b49a24743eb2b6d1198c7cf014ee791bccd5d3223ed8a1e4769d899e1f894a5b
+https://archive.debian.org/debian/pool/main/p/pipewire/libpipewire-0.3-0_0.3.65-2~bpo11+1_i386.deb,1d032b638081704393bc847e2e1f7a00c6894fa262ed0272fb7282962e8915a9
+https://archive.debian.org/debian/pool/main/p/pipewire/libpipewire-0.3-modules_0.3.65-2~bpo11+1_amd64.deb,6a4c2d7b127ed18c8c2a558e4d63fcd56de4a154bb9db5fafa7e497f4771dc4a
+https://archive.debian.org/debian/pool/main/p/pipewire/libpipewire-0.3-modules_0.3.65-2~bpo11+1_i386.deb,4585064f220490562c132e6fe6a2c46a66d319f6862f60f26e21bccbaadcbd90
+https://archive.debian.org/debian/pool/main/p/pipewire/libspa-0.2-modules_0.3.65-2~bpo11+1_amd64.deb,833a024051fcfa79208462486c2761b6e1c464676da96e0d3664f4a189449e34
+https://archive.debian.org/debian/pool/main/p/pipewire/libspa-0.2-modules_0.3.65-2~bpo11+1_i386.deb,5cbd85ab559d99dc5907898488c87b8cf0e117412e0d7981ca7e69e35fbc3f84
 https://archives.fedoraproject.org/pub/archive/epel/9.5/Everything/x86_64/Packages/m/mbedtls-2.28.8-1.el9.x86_64.rpm,54cb7e43e902a7378e912ecfec470ee30fe69af323d3812cbc39ddebd64790ff
 https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/34/Everything/x86_64/os/Packages/l/libpng12-1.2.57-13.fc34.i686.rpm,5e4f525f44d538e3467dd13c66010d54f3d12ec4a319829e15a23ff2d0195b5b
 https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/34/Everything/x86_64/os/Packages/l/libpng12-1.2.57-13.fc34.x86_64.rpm,49f956ad143399c29f5ddf6da6b6fc108ce130d1ed598b4ec5a68b1ff26091de
@@ -79,6 +85,8 @@ https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/pam-1.5.1-22.el9_5.i68
 https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/pam-1.5.1-22.el9_5.x86_64.rpm,15bfe177d3c10982c75e81d7b274883a9fb53322011c8d829667c983ee419b18
 https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/pciutils-libs-3.7.0-5.el9.i686.rpm,2cf468da5ecf307cc325c9a5da0a288aafd25dec0951af2b4d0954a77bdf900d
 https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/pciutils-libs-3.7.0-5.el9.x86_64.rpm,308bd897d8f9a36020d70edc79089a3595b22b149200d67c37e2d4e6147a9f75
+https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/polkit-libs-0.117-13.el9.i686.rpm,4079b9fe93cef0d2ec5b74502ade41a175e1f95e72bace30af29cdcaab037cae
+https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/polkit-libs-0.117-13.el9.x86_64.rpm,5ff471276dcb8c38fe16bf91f963ec4f051954107c3f0ca28fbb3bd2c6521f2b
 https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/sqlite-libs-3.34.1-7.el9_3.i686.rpm,dc6946a8344b8f4f476fef9479d1786c86fdcd045e988ab5d85fef7780e1fae4
 https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/sqlite-libs-3.34.1-7.el9_3.x86_64.rpm,e7f87444f24a03b37caa02942082b6d4283067ecbbd3f7798f882d22b55713cf
 https://vault.almalinux.org/9.5/BaseOS/x86_64/os/Packages/zlib-1.2.11-40.el9.i686.rpm,659ee5222028744806be3f822369a726c721aa346eed2882dcf019d83c111e67
