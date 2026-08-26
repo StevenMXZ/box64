@@ -70,6 +70,7 @@ int my_sigaltstack(x64emu_t* emu, const x64_stack_t* ss, x64_stack_t* oss);
 void* my_mmap64(x64emu_t* emu, void *addr, unsigned long length, int prot, int flags, int fd, int64_t offset);
 int my_munmap(x64emu_t* emu, void* addr, unsigned long length);
 int my_mprotect(x64emu_t* emu, void *addr, unsigned long len, int prot);
+int my_madvise(x64emu_t* emu, void* addr, size_t length, int advice);
 void* my_mremap(x64emu_t* emu, void* old_addr, size_t old_size, size_t new_size, int flags, void* new_addr);
 #ifndef NOALIGN
 int32_t my_epoll_ctl(x64emu_t* emu, int32_t epfd, int32_t op, int32_t fd, void* event);
@@ -132,7 +133,7 @@ static const scwrap_t syscallwrap[] = {
     #endif
     //[25] = {__NR_mremap, 5},    // wrapped to track protection
     [27] = {__NR_mincore, 3},
-    [28] = {__NR_madvise, 3},
+    //[28] = {__NR_madvise, 3},   // wrapped for guest page size
     #ifdef __NR_dup
     [32] = {__NR_dup, 1},
     #endif
@@ -396,7 +397,7 @@ static const scwrap_t syscallwrap[] = {
     #if defined(__NR_epoll_pwait2) && defined(NOALIGN)
     [441] = {__NR_epoll_pwait2, 5},
     #endif
-    #ifdef __NR_landlock_create_ruleset	
+    #ifdef __NR_landlock_create_ruleset
     [444] = {__NR_landlock_create_ruleset, 3},
     #endif
     #ifdef __NR_landlock_add_rule
@@ -498,6 +499,7 @@ typedef struct clone_s {
     x64emu_t* emu;
     void* stack2free;
     void* tls;
+    int set_tls;
 } clone_t;
 
 static int clone_fn_syscall(void* arg)
@@ -506,7 +508,7 @@ static int clone_fn_syscall(void* arg)
     x64emu_t *emu = args->emu;
     thread_forget_emu();
     thread_set_emu(emu);
-    //TODO: do something with TLS. Refresh libc tls with that?
+    if(args->set_tls) SetFSBaseEmu(emu, args->tls);
     R_RAX = 0;
     DynaRun(emu);
     int ret = R_EAX;
@@ -567,23 +569,23 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
         int sc = syscallwrap[s].nats;
         switch(syscallwrap[s].nbpars) {
             case 0: S_RAX = syscall(sc); break;
-            case 1: 
-                if(s==80) {if(log) snprintf(buff2, 127, " [sys_chdir(\"%s\")]", (char*)R_RDI);}; 
-                S_RAX = syscall(sc, R_RDI); 
+            case 1:
+                if(s==80) {if(log) snprintf(buff2, 127, " [sys_chdir(\"%s\")]", (char*)R_RDI);};
+                S_RAX = syscall(sc, R_RDI);
                 break;
-            case 2: 
-                if(s==33) {if(log) snprintf(buff2, 127, " [sys_access(\"%s\", %ld)]", (char*)R_RDI, R_RSI);}; 
-                S_RAX = syscall(sc, R_RDI, R_RSI); 
+            case 2:
+                if(s==33) {if(log) snprintf(buff2, 127, " [sys_access(\"%s\", %ld)]", (char*)R_RDI, R_RSI);};
+                S_RAX = syscall(sc, R_RDI, R_RSI);
                 break;
-            case 3: 
-                if(s==42) {if(log) snprintf(buff2, 127, " [sys_connect(%d, %p[type=%d], %d)]", R_EDI, (void*)R_RSI, *(unsigned short*)R_RSI, R_EDX);}; 
-                if(s==258) {if(log) snprintf(buff2, 127, " [sys_mkdirat(%d, %s, 0x%x]", R_EDI, (char*)R_RSI, R_EDX);}; 
-                S_RAX = syscall(sc, R_RDI, R_RSI, R_RDX); 
+            case 3:
+                if(s==42) {if(log) snprintf(buff2, 127, " [sys_connect(%d, %p[type=%d], %d)]", R_EDI, (void*)R_RSI, *(unsigned short*)R_RSI, R_EDX);};
+                if(s==258) {if(log) snprintf(buff2, 127, " [sys_mkdirat(%d, %s, 0x%x]", R_EDI, (char*)R_RSI, R_EDX);};
+                S_RAX = syscall(sc, R_RDI, R_RSI, R_RDX);
                 break;
             case 4: S_RAX = syscall(sc, R_RDI, R_RSI, R_RDX, R_R10); break;
-            case 5: 
-                if(s==165) {if(log) snprintf(buff2, 127, " [sys_mount(%s, %s, %s, 0x%lx, %s]", (char*)R_RDI, (char*)R_RSI, (char*)R_RDX, R_R10, R_R8?(char*)R_R8:"(nil)");}; 
-                S_RAX = syscall(sc, R_RDI, R_RSI, R_RDX, R_R10, R_R8); 
+            case 5:
+                if(s==165) {if(log) snprintf(buff2, 127, " [sys_mount(%s, %s, %s, 0x%lx, %s]", (char*)R_RDI, (char*)R_RSI, (char*)R_RDX, R_R10, R_R8?(char*)R_R8:"(nil)");};
+                S_RAX = syscall(sc, R_RDI, R_RSI, R_RDX, R_R10, R_R8);
                 break;
             case 6: S_RAX = syscall(sc, R_RDI, R_RSI, R_RDX, R_R10, R_R8, R_R9); break;
             default:
@@ -714,6 +716,11 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
         case 25: // sys_mremap
             R_RAX = (uintptr_t)my_mremap(emu, (void*)R_RDI, R_RSI, R_RDX, R_R10d, (void*)R_R8);
             break;
+        case 28: // sys_madvise
+            S_RAX = my_madvise(emu, (void*)R_RDI, R_RSI, S_EDX);
+            if (S_RAX == -1)
+                S_RAX = -errno;
+            break;
         #ifndef __NR_dup
         case 32: // sys_dup
             S_RAX = dup(S_EDI);
@@ -756,7 +763,10 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
                     clone_t* args = box_calloc(1, sizeof(clone_t));
                     newemu->regs[_SP].q[0] = sp;  // setup new stack pointer
                     args->emu = newemu;
-                    if(flags&CLONE_SETTLS) args->tls = (void*)R_R9;
+                    if(flags & CLONE_SETTLS) {
+                        args->tls = (void*)R_R8;
+                        args->set_tls = 1;
+                    }
                     void* mystack = NULL;
                     if(my_context->stack_clone_used) {
                         args->stack2free = mystack = box_malloc(1024*1024);  // stack for own process...
@@ -767,7 +777,7 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
                         my_context->stack_clone_used = 1;
                     }
                     flags&=~CLONE_SETTLS;   // to be handled differently
-                    int64_t ret = clone(clone_fn_syscall, (void*)((uintptr_t)mystack+1024*1024), flags, args, R_RDX, R_R8, R_R10);
+                    int64_t ret = clone(clone_fn_syscall, (void*)((uintptr_t)mystack+1024*1024), flags, args, R_RDX, NULL, R_R10);
                     S_RAX = ret;
                 }
                 else
@@ -986,7 +996,7 @@ void EXPORT x64Syscall_linux(x64emu_t *emu)
         #endif
         case 267:   // sys_readlinkat
             if(log) snprintf(buff2, 127, " [sys_readlinkat(%d, \"%s\"...]", S_EDI, (char*)R_RSI);
-            S_RAX = my_readlinkat(emu, S_EDI, (void*)R_RSI, (void*)R_RDX, R_R10); 
+            S_RAX = my_readlinkat(emu, S_EDI, (void*)R_RSI, (void*)R_RDX, R_R10);
             if(S_RAX==-1)
                 S_RAX = -errno;
             break;
@@ -1168,6 +1178,8 @@ long EXPORT my_syscall(x64emu_t *emu)
         #endif
         case 25: // sys_mremap
             return (intptr_t)my_mremap(emu, (void*)R_RSI, R_RDX, R_RCX, R_R8d, (void*)R_R9);
+        case 28: // sys_madvise
+            return my_madvise(emu, (void*)R_RSI, R_RDX, S_ECX);
         #ifndef __NR_dup
         case 32:
             return dup(S_ESI);
@@ -1185,6 +1197,7 @@ long EXPORT my_syscall(x64emu_t *emu)
             // so flags=R_RSI, stack=R_RDX, parent_tid=R_RCX, child_tid=R_R8, tls=R_R9
             if(R_RDX)
             {
+                uint64_t flags = R_RSI;
                 void* stack_base = (void*)R_RDX;
                 int stack_size = 0;
                 uintptr_t sp = R_RDX;
@@ -1209,9 +1222,15 @@ long EXPORT my_syscall(x64emu_t *emu)
                 SetupX64Emu(newemu, emu);
                 CloneEmu(newemu, emu);
                 newemu->regs[_SP].q[0] = sp;  // setup new stack pointer
+                clone_t* args = box_calloc(1, sizeof(clone_t));
+                args->emu = newemu;
+                if(flags & CLONE_SETTLS) {
+                    args->tls = (void*)R_R9;
+                    args->set_tls = 1;
+                }
                 void* mystack = NULL;
                 if(my_context->stack_clone_used) {
-                    mystack = box_malloc(1024*1024);  // stack for own process... memory leak, but no practical way to remove it
+                    args->stack2free = mystack = box_malloc(1024*1024);  // stack for own process...
                 } else {
                     if(!my_context->stack_clone)
                         my_context->stack_clone = box_malloc(1024*1024);
@@ -1219,7 +1238,8 @@ long EXPORT my_syscall(x64emu_t *emu)
                     my_context->stack_clone_used = 1;
                 }
                 // x86_64 raw clone is long clone(unsigned long flags, void *stack, int *parent_tid, int *child_tid, unsigned long tls);
-                long ret = clone(clone_fn_syscall, (void*)((uintptr_t)mystack+1024*1024), R_ESI, newemu, R_RCX, R_R9, R_R8);
+                flags &= ~CLONE_SETTLS;   // guest TLS is applied to the emulated FS base in clone_fn_syscall
+                long ret = clone(clone_fn_syscall, (void*)((uintptr_t)mystack+1024*1024), flags, args, R_RCX, NULL, R_R8);
                 return ret;
             }
             else
@@ -1366,7 +1386,7 @@ long EXPORT my_syscall(x64emu_t *emu)
             return renameat(S_RSI, (const char*)R_RDX, S_ECX, (const char*)R_R8);
         #endif
         case 267:   // sys_readlinkat
-            return my_readlinkat(emu, S_RSI, (void*)R_RDX, (void*)R_RCX, R_R8); 
+            return my_readlinkat(emu, S_RSI, (void*)R_RDX, (void*)R_RCX, R_R8);
         #ifndef NOALIGN
         case 281:   // sys_epoll_pwait
             return my_epoll_pwait(emu, S_ESI, (void*)R_RDX, S_ECX, S_R8d, (void*)R_R9);

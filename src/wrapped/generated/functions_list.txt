@@ -140,7 +140,6 @@
 #() fWp
 #() vFEi
 #() vFEp
-#() vFEb
 #() vFcc
 #() vFww
 #() vFii
@@ -190,7 +189,6 @@
 #() vFpL
 #() vFpp
 #() vFpS
-#() vFpA
 #() vFSi
 #() vFSl
 #() vFSp
@@ -246,7 +244,6 @@
 #() iFpO
 #() iFpS
 #() iFpH
-#() iFpA
 #() iFSi
 #() iFSp
 #() iFHp
@@ -546,6 +543,7 @@
 #() vFpLL
 #() vFpLp
 #() vFppi
+#() vFppC
 #() vFppu
 #() vFppU
 #() vFppf
@@ -554,7 +552,6 @@
 #() vFppL
 #() vFppp
 #() vFppV
-#() vFppA
 #() vFpHi
 #() vFSpi
 #() vFSpL
@@ -701,7 +698,6 @@
 #() iFSpi
 #() iFSpL
 #() iFSpp
-#() iFSpA
 #() iFHHp
 #() iFbpp
 #() IFiIi
@@ -1163,7 +1159,6 @@
 #() vFpppl
 #() vFpppL
 #() vFpppp
-#() vFpppV
 #() vFSpii
 #() vFSppi
 #() vFHHpi
@@ -1731,6 +1726,7 @@
 #() vFEpppi
 #() vFEpppu
 #() vFEpppp
+#() vFEpppV
 #() vFiiiii
 #() vFiiiiu
 #() vFiiipi
@@ -1830,7 +1826,6 @@
 #() vFpiiup
 #() vFpiiff
 #() vFpiipp
-#() vFpiipV
 #() vFpiuuu
 #() vFpilpp
 #() vFpipii
@@ -1865,6 +1860,7 @@
 #() vFplplp
 #() vFpLiii
 #() vFpLiiL
+#() vFpLipp
 #() vFpLLLL
 #() vFpLLLp
 #() vFpLLpp
@@ -2282,6 +2278,7 @@
 #() pFEpppp
 #() pFEpppV
 #() pFEpppA
+#() pFESppp
 #() pFiiupi
 #() pFiiupL
 #() pFipipL
@@ -2394,6 +2391,7 @@
 #() iWppppp
 #() vFEiiipp
 #() vFEpiwpp
+#() vFEpiipV
 #() vFEpiLpp
 #() vFEpippp
 #() vFEpuipV
@@ -2497,6 +2495,7 @@
 #() vFpuuupp
 #() vFpuupuu
 #() vFpuuppp
+#() vFpuUUuu
 #() vFpudddd
 #() vFpuLuuu
 #() vFpupuuu
@@ -2724,7 +2723,6 @@
 #() iFppfipp
 #() iFppdidd
 #() iFpplupp
-#() iFpplppi
 #() iFppLiWL
 #() iFppLipp
 #() iFppLupp
@@ -3116,6 +3114,7 @@
 #() iFEppippp
 #() iFEppupup
 #() iFEppuppp
+#() iFEpplppi
 #() iFEppLpIu
 #() iFEpppLpp
 #() iFEpppppL
@@ -3846,7 +3845,6 @@
 #() iFEpuppupppp
 #() iFEpupppLppL
 #() iFEppiippppp
-#() iFEppLuppupp
 #() iFEppppLpppp
 #() iFEppppppipp
 #() iFEpppppppip
@@ -3946,6 +3944,7 @@
 #() iFEppiipppppp
 #() iFEppLpLpLLpp
 #() iFEpppupppppp
+#() iFEpppLuppupp
 #() iFEpppppppppp
 #() iFuiiiiuuiiip
 #() iFuppipipippi
@@ -4311,7 +4310,6 @@ wrappedcairo:
   - cairo_surface_set_mime_data
 wrappedcairogobject:
 wrappedcap:
-wrappedcrashhandler:
 wrappedcrypto:
 - vFp:
   - CRYPTO_set_id_callback
@@ -4432,6 +4430,9 @@ wrappedcrypto3:
   - PEM_read_bio_X509_CERT_PAIR
   - PEM_read_bio_X509_CRL
   - PEM_read_bio_X509_REQ
+- pFSppp:
+  - PEM_read_X509
+  - PEM_read_X509_AUX
 - iFpiipp:
   - ENGINE_ctrl
 - iFpLppp:
@@ -5401,6 +5402,8 @@ wrappedkrb5:
 - iFppppppipp:
   - krb5_get_init_creds_password
 wrappedlber:
+- iFppi:
+  - ber_sockbuf_remove_io
 - iFppip:
   - ber_sockbuf_add_io
 wrappedlcms2:
@@ -5479,12 +5482,15 @@ wrappedlibc:
 - vFi:
   - _exit
   - exit
+  - quick_exit
 - vFp:
   - _ITM_deregisterTMCloneTable
   - _ZGTtdlPv
   - __cxa_finalize
 - iFv:
+  - __getpagesize
   - fork
+  - getpagesize
   - sched_getcpu
   - vfork
 - iFi:
@@ -5492,6 +5498,7 @@ wrappedlibc:
 - iFp:
   - __libc_dlclose
   - _setjmp
+  - at_quick_exit
   - atexit
   - getcontext
   - register_printf_type
@@ -5542,9 +5549,12 @@ wrappedlibc:
 - iFiu:
   - pidfd_open
 - iFip:
+  - __getrlimit
   - fstat
   - fstat64
 - iFup:
+  - getrlimit
+  - getrlimit64
   - setrlimit
 - iFpi:
   - __sigsetjmp
@@ -5556,6 +5566,7 @@ wrappedlibc:
 - iFpL:
   - munmap
 - iFpp:
+  - __cxa_at_quick_exit
   - __vprintf_chk
   - dl_iterate_phdr
   - execv
@@ -5653,7 +5664,10 @@ wrappedlibc:
 - iFipA:
   - vdprintf
 - iFpLi:
+  - __madvise
+  - madvise
   - mprotect
+  - posix_madvise
 - iFpLp:
   - init_module
 - iFppi:
@@ -5964,9 +5978,6 @@ wrappedlibgpgme:
 - uFppp:
   - gpgme_data_new_from_cbs
 wrappedlibharfbuzz:
-- vFp:
-  - hb_draw_funcs_destroy
-  - hb_font_funcs_destroy
 - pFp:
   - hb_unicode_funcs_reference
 - pFpp:
@@ -6666,7 +6677,7 @@ wrappedlibx11xcb:
 wrappedlibxau:
 wrappedlibxaw:
 wrappedlibxcb:
-- vFb:
+- vFp:
   - xcb_disconnect
 - pFip:
   - xcb_connect_to_fd
@@ -6782,6 +6793,34 @@ wrappedlzma:
   - lzma_index_buffer_decode
 - iFpupppLppL:
   - lzma_stream_buffer_decode
+wrappedmimalloc:
+- vFv:
+  - mi_process_init
+  - mi_thread_init
+- vFi:
+  - mi_collect
+- vFp:
+  - mi_heap_destroy
+- pFv:
+  - mi_heap_new
+- pFL:
+  - mi_zalloc
+- pFp:
+  - mallinfo
+- vFul:
+  - mi_option_set
+- vFpp:
+  - mi_register_error
+  - mi_register_output
+  - mi_stats_print_out
+- pFLL:
+  - mi_malloc_aligned
+- pFpL:
+  - mi_heap_malloc
+- pFpLL:
+  - mi_realloc_aligned
+- vFpppppppp:
+  - mi_process_info
 wrappedmpg123:
 - iFpppp:
   - mpg123_reader64
@@ -6798,6 +6837,7 @@ wrappednss3:
 - vFp:
   - PK11_SetPasswordFunc
   - PORT_SetUCS2_ASCIIConversionFunction
+  - PORT_SetUCS2_UTF8ConversionFunction
 - iFpp:
   - CERT_RegisterAlternateOCSPAIAInfoCallBack
   - NSS_RegisterShutdown
@@ -6816,8 +6856,9 @@ wrappedopenal:
   - alRequestFoldbackStart
 wrappedopencl:
 - iFppp:
-  - clSetEventCallback
   - clSetMemObjectDestructorCallback
+- iFpipp:
+  - clSetEventCallback
 - pFpuppp:
   - clCreateContextFromType
 - iFpupppp:
@@ -6826,10 +6867,10 @@ wrappedopencl:
   - clCreateContext
 - iFpuppupppp:
   - clCompileProgram
-- iFppLuppupp:
-  - clEnqueueNativeKernel
 - pFpuppupppp:
   - clLinkProgram
+- iFpppLuppupp:
+  - clEnqueueNativeKernel
 wrappedp11kit:
 - vFppp:
   - p11_kit_pin_unregister_callback
@@ -6843,8 +6884,6 @@ wrappedpango:
   - pango_attribute_init
 wrappedpangocairo:
 wrappedpangoft2:
-- pFp:
-  - pango_fc_font_lock_face
 wrappedpcap:
 wrappedpixman1:
 wrappedplc4:
@@ -7448,6 +7487,7 @@ wrappedvulkan:
   - vkDestroyDescriptorUpdateTemplate
   - vkDestroyDescriptorUpdateTemplateKHR
   - vkDestroyEvent
+  - vkDestroyExternalComputeQueueNV
   - vkDestroyFence
   - vkDestroyFramebuffer
   - vkDestroyImage
@@ -7506,6 +7546,7 @@ wrappedvulkan:
   - vkCreateDevice
   - vkCreateDisplayPlaneSurfaceKHR
   - vkCreateEvent
+  - vkCreateExternalComputeQueueNV
   - vkCreateFence
   - vkCreateFramebuffer
   - vkCreateHeadlessSurfaceEXT

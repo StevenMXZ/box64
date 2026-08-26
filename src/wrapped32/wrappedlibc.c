@@ -138,6 +138,13 @@ static const char* libcName =
 #endif
     ;
 
+EXPORT int my32_getpagesize(x64emu_t* emu)
+{
+    (void)emu;
+    return X86_PAGE_SIZE;
+}
+EXPORT int my32___getpagesize(x64emu_t* emu) __attribute__((alias("my32_getpagesize")));
+
 typedef int32_t (*iFiiV_t)(int32_t, int32_t, ...);
 typedef int32_t (*iFpipp_t)(void*, int32_t, void*, void*);
 #if 0
@@ -2476,9 +2483,11 @@ EXPORT void* my32_ctime(void* t)
 EXPORT int my32_utimensat(int dirfd, void* name, void* times, int flags)
 {
     struct timespec times_l[2] = {0};
-    from_struct_LL((struct_LL_t*)&times_l[0], to_ptrv(times));
-    from_struct_LL((struct_LL_t*)&times_l[1], to_ptrv(times)+8);
-    return utimensat(dirfd, name, times_l, flags);
+    if (times) {
+        from_struct_LL((struct_LL_t*)&times_l[0], to_ptrv(times));
+        from_struct_LL((struct_LL_t*)&times_l[1], to_ptrv(times)+8);
+    }
+    return utimensat(dirfd, name, times ? times_l : NULL, flags);
 }
 
 #ifndef ANDROID
@@ -3274,31 +3283,37 @@ EXPORT int my32_nanosleep(const struct timespec *req, struct timespec *rem)
 EXPORT int my32_utimes(x64emu_t* emu, const char* name, uint32_t* times)
 {
     struct timeval tm[2];
-    tm[0].tv_sec = times[0];
-    tm[0].tv_usec = times[1];
-    tm[1].tv_sec = times[2];
-    tm[1].tv_usec = times[3];
-    return utimes(name, tm);
+    if (times) {
+        tm[0].tv_sec = times[0];
+        tm[0].tv_usec = times[1];
+        tm[1].tv_sec = times[2];
+        tm[1].tv_usec = times[3];
+    }
+    return utimes(name, times ? tm : NULL);
 }
 
 EXPORT int my32_futimes(x64emu_t* emu, int fd, uint32_t* times)
 {
     struct timeval tm[2];
-    tm[0].tv_sec = times[0];
-    tm[0].tv_usec = times[1];
-    tm[1].tv_sec = times[2];
-    tm[1].tv_usec = times[3];
-    return futimes(fd, tm);
+    if (times) {
+        tm[0].tv_sec = times[0];
+        tm[0].tv_usec = times[1];
+        tm[1].tv_sec = times[2];
+        tm[1].tv_usec = times[3];
+    }
+    return futimes(fd, times ? tm : NULL);
 }
 
 EXPORT int my32_futimens(x64emu_t* emu, int fd, uint32_t* times)
 {
     struct timespec tm[2];
-    tm[0].tv_sec = times[0];
-    tm[0].tv_nsec = times[1];
-    tm[1].tv_sec = times[2];
-    tm[1].tv_nsec = times[3];
-    return futimens(fd, tm);
+    if (times) {
+        tm[0].tv_sec = times[0];
+        tm[0].tv_nsec = times[1];
+        tm[1].tv_sec = times[2];
+        tm[1].tv_nsec = times[3];
+    }
+    return futimens(fd, times ? tm : NULL);
 }
 
 EXPORT long my32_strtol(const char* s, char** endp, int base)

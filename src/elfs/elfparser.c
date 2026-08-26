@@ -87,7 +87,7 @@ static void* LoadSubLoadSection(FILE *f, elfheader_t* h, uintptr_t offset, size_
 {
     if(!size && !h->Dynamic._64) return NULL;
     void* ret = NULL;
-    for (size_t i=0; i<h->numDynamic && !ret; ++i) {
+    for (size_t i=0; i<h->numPHEntries && !ret; ++i) {
         if(h->PHEntries._64[i].p_type == PT_LOAD) {
             if(offset>=h->PHEntries._64[i].p_paddr && offset<h->PHEntries._64[i].p_paddr+h->PHEntries._64[i].p_memsz) {
                 if(!size) {
@@ -238,7 +238,7 @@ elfheader_t* ParseElfHeader64(FILE* f, const char* name, int exec)
             printf_dump(LOG_DEBUG, "Read number of String Table in 1st Section\n");
             h->SHIdx = h->SHEntries._64[0].sh_link;
         }
-        if(h->SHIdx > h->numSHEntries) {
+        if(h->SHIdx >= h->numSHEntries) {
             printf_log(LOG_INFO, "Incoherent Section String Table Index : %zu / %zu\n", h->SHIdx, h->numSHEntries);
             FreeElfHeader(&h);
             return NULL;
@@ -364,8 +364,17 @@ elfheader_t* ParseElfHeader64(FILE* f, const char* name, int exec)
                 printf_dump(LOG_DEBUG, "The DT_VERDEF is at address %p\n", h->VerDef);
                 break;
             case DT_FLAGS:
-                h->flags = val;
+                h->flags |= val;
                 printf_dump(LOG_DEBUG, "The DT_FLAGS is 0x%x\n", h->flags);
+                break;
+            case DT_BIND_NOW:
+                h->flags |= DF_BIND_NOW;
+                printf_dump(LOG_DEBUG, "The DT_BIND_NOW flag is present\n");
+                break;
+            case DT_FLAGS_1:
+                if (val & DF_1_NOW)
+                    h->flags |= DF_BIND_NOW;
+                printf_dump(LOG_DEBUG, "The DT_FLAGS_1 is 0x%lx\n", val);
                 break;
             case DT_HASH:
                 h->hash = ptr;

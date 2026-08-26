@@ -569,6 +569,7 @@ uintptr_t dynarec64_AVX_66_0F38(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t i
             SETFLAGS(X_ALL, SF_SET, NAT_FLAGS_NOFUSION);
             GETEX(x1, 0, vex.l ? 24 : 8);
             GETGX();
+            GETGY();
             CLEAR_FLAGS();
             SET_DFNONE();
             IFX (X_ZF | X_CF) {
@@ -603,9 +604,9 @@ uintptr_t dynarec64_AVX_66_0F38(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t i
                     AND(x6, x4, x2);
                     AND(x7, x5, x3);
                     OR(x6, x6, x7);
-                    BNEZ(x6, 4 + 2 * 4);
-                    ANDI(x6, xFlags, 1 << F_ZF);
-                    OR(xFlags, xFlags, x6);
+                    BEQZ_MARK(x6);
+                    ANDI(xFlags, xFlags, ~(1 << F_ZF));
+                    MARK;
                 }
                 IFX (X_CF) {
                     NOT(x4, x4);
@@ -613,11 +614,58 @@ uintptr_t dynarec64_AVX_66_0F38(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t i
                     AND(x6, x4, x2);
                     AND(x7, x5, x3);
                     OR(x6, x6, x7);
-                    BNEZ(x6, 4 + 2 * 4);
-                    ANDI(x6, xFlags, 1 << F_CF);
-                    OR(xFlags, xFlags, x6);
+                    BEQZ_MARK2(x6);
+                    ANDI(xFlags, xFlags, ~(1 << F_CF));
+                    MARK2;
                 }
             }
+            break;
+        case 0x18:
+            INST_NAME("VBROADCASTSS Gx, Ex");
+            nextop = F8;
+            GETGX();
+            GETEX(x2, 0, 1);
+            GETGY();
+            LWU(x4, wback, fixedaddress);
+            for (int i = 0; i < 4; ++i) {
+                SW(x4, gback, gdoffset + i * 4);
+            }
+            if (vex.l) {
+                for (int i = 0; i < 4; ++i) {
+                    SW(x4, gback, gyoffset + i * 4);
+                }
+            } else {
+                YMM0(gd);
+            }
+            break;
+        case 0x19:
+            INST_NAME("VBROADCASTSD Gx, Ex");
+            nextop = F8;
+            GETGX();
+            GETEX(x2, 0, 1);
+            GETGY();
+            if (!vex.l) UDF();
+            LD(x4, wback, fixedaddress);
+            for (int i = 0; i < 2; ++i) {
+                SD(x4, gback, gdoffset + i * 8);
+            }
+            for (int i = 0; i < 2; ++i) {
+                SD(x4, gback, gyoffset + i * 8);
+            }
+            break;
+        case 0x1A:
+            INST_NAME("VBROADCASTF128 Gx, Ex");
+            nextop = F8;
+            GETGX();
+            GETEX(x2, 0, 8);
+            GETGY();
+            if (!vex.l || MODREG) UDF();
+            LD(x4, wback, fixedaddress);
+            LD(x5, wback, fixedaddress + 8);
+            SD(x4, gback, gdoffset);
+            SD(x5, gback, gdoffset + 8);
+            SD(x4, gback, gyoffset);
+            SD(x5, gback, gyoffset + 8);
             break;
         case 0x1C:
             INST_NAME("VPABSB Gx, Ex");
@@ -973,6 +1021,20 @@ uintptr_t dynarec64_AVX_66_0F38(dynarec_rv64_t* dyn, uintptr_t addr, uintptr_t i
                 }
             } else
                 YMM0(gd);
+            break;
+        case 0x5A:
+            INST_NAME("VBROADCASTI128 Gx, Ex");
+            nextop = F8;
+            GETGX();
+            GETEX(x2, 0, 8);
+            GETGY();
+            if (!vex.l || MODREG) UDF();
+            LD(x4, wback, fixedaddress);
+            LD(x5, wback, fixedaddress + 8);
+            SD(x4, gback, gdoffset);
+            SD(x5, gback, gdoffset + 8);
+            SD(x4, gback, gyoffset);
+            SD(x5, gback, gyoffset + 8);
             break;
         default:
             DEFAULT;

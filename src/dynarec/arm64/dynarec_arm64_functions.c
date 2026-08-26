@@ -28,6 +28,11 @@
 // Get a FPU scratch reg
 int fpu_get_scratch(dynarec_arm_t* dyn, int ninst)
 {
+    if(dyn->n.fpu_scratch >= 8) {
+        printf_log(LOG_INFO, "BOX64 Dynarec: out of FPU scratch registers at inst=%d\n", ninst);
+        dyn->abort = 1;
+        return SCRATCH0;
+    }
     int ret = SCRATCH0 + dyn->n.fpu_scratch++;
     if(dyn->n.ymm_used) {
         printf_log(LOG_INFO, "Warning, getting a scratch register after getting some YMM at inst=%d", ninst);
@@ -44,6 +49,11 @@ int fpu_get_scratch(dynarec_arm_t* dyn, int ninst)
 // Get 2 consicutive FPU scratch reg
 int fpu_get_double_scratch(dynarec_arm_t* dyn, int ninst)
 {
+    if(dyn->n.fpu_scratch >= 7) {
+        printf_log(LOG_INFO, "BOX64 Dynarec: out of FPU double scratch registers at inst=%d\n", ninst);
+        dyn->abort = 1;
+        return SCRATCH0;
+    }
     int ret = SCRATCH0 + dyn->n.fpu_scratch;
     if(dyn->n.ymm_used) {
         printf_log(LOG_INFO, "Warning, getting a double scratch register after getting some YMM at inst=%d", ninst);
@@ -76,12 +86,19 @@ void fpu_reset_scratch(dynarec_arm_t* dyn)
     dyn->n.xmm_unneeded = 0;
     dyn->n.ymm_unneeded = 0;
     dyn->n.xmm_removed = 0;
+    dyn->n.xmm_scalar = 0;
+    dyn->n.xmm_scalar_single = 0;
 }
 // Get a x87 double reg
 int fpu_get_reg_x87(dynarec_arm_t* dyn, int ninst, int t, int n)
 {
     int i=X870;
-    while (dyn->n.fpuused[i]) ++i;
+    while (i<32 && dyn->n.fpuused[i]) ++i;
+    if(i==32) {
+        printf_log(LOG_INFO, "BOX64 Dynarec: out of FPU x87 registers at inst=%d\n", ninst);
+        dyn->abort = 1;
+        return X870;
+    }
     if(dyn->n.neoncache[i].t==NEON_CACHE_YMMR || dyn->n.neoncache[i].t==NEON_CACHE_YMMW) {
         // should only happens in step 0...
         dyn->insts[ninst].purge_ymm |= (1<<dyn->n.neoncache[i].n); // mark as purged
@@ -109,7 +126,7 @@ void fpu_free_reg(dynarec_arm_t* dyn, int reg)
         dyn->n.ymm_removed |= 1<<n;
         if(t==NEON_CACHE_YMMW)
             dyn->n.ymm_write |= 1<<n;
-        if(reg>SCRATCH0)
+        if(reg>=SCRATCH0)
             dyn->n.ymm_regs |= (8LL+reg-SCRATCH0)<<(n*4);
         else
             dyn->n.ymm_regs |= ((uint64_t)(reg-EMM0))<<(n*4);
@@ -429,7 +446,7 @@ static int isCacheEmpty(dynarec_native_t* dyn, int ninst) {
     if(dyn->insts[ninst].n.stack_next) {
         return 0;
     }
-    for(int i=0; i<24; ++i)
+    for(int i=0; i<32; ++i)
         if(dyn->insts[ninst].n.neoncache[i].v) {       // there is something at ninst for i
             if(!(
             (dyn->insts[ninst].n.neoncache[i].t==NEON_CACHE_ST_F
@@ -638,49 +655,6 @@ void neoncacheUnwind(neoncache_t* cache)
     cache->ymm_used = 0;
 }
 
-#define F8      *(uint8_t*)(addr++)
-#define F32S64  (uint64_t)(int64_t)*(int32_t*)(addr+=4, addr-4)
-// Get if ED will have the correct parity. Not emitting anything. Parity is 2 for DWORD or 3 for QWORD
-int getedparity(dynarec_arm_t* dyn, int ninst, uintptr_t addr, uint8_t nextop, int parity, int delta)
-{
-    (void)dyn; (void)ninst;
-
-    uint32_t tested = (1<<parity)-1;
-    if((nextop&0xC0)==0xC0)
-        return 0;   // direct register, no parity...
-    if(!(nextop&0xC0)) {
-        if((nextop&7)==4) {
-            uint8_t sib = F8;
-            int sib_reg = (sib>>3)&7;
-            if((sib&0x7)==5) {
-                uint64_t tmp = F32S64;
-                if (sib_reg!=4) {
-                    // if XXXXXX+reg<<N then check parity of XXXXX and N should be enough
-                    return ((tmp&tested)==0 && (sib>>6)>=parity)?1:0;
-                } else {
-                    // just a constant...
-                    return (tmp&tested)?0:1;
-                }
-            } else {
-                if(sib_reg==4 && parity<3)
-                    return 0;   // simple [reg]
-                // don't try [reg1 + reg2<<N], unless reg1 is ESP
-                return ((sib&0x7)==4 && (sib>>6)>=parity)?1:0;
-            }
-        } else if((nextop&7)==5) {
-            uint64_t tmp = F32S64;
-            tmp+=addr+delta;
-            return (tmp&tested)?0:1;
-        } else {
-            return 0;
-        }
-    } else {
-        return 0; //Form [reg1 + reg2<<N + XXXXXX]
-    }
-}
-#undef F8
-#undef F32S64
-
 const char* getCacheName(int t, int n)
 {
     static char buff[20];
@@ -720,22 +694,22 @@ static register_mapping_t register_mappings[] = {
     { "bx", "x13" },
     { "bh", "x13" },
     { "bl", "x13" },
-    { "rsi", "x14" },
-    { "esi", "w14" },
-    { "si", "x14" },
-    { "sil", "x14" },
-    { "rdi", "x15" },
-    { "edi", "w15" },
-    { "di", "x15" },
-    { "dil", "x15" },
-    { "rsp", "x16" },
-    { "esp", "w16" },
-    { "sp", "x16" },
-    { "spl", "x16" },
-    { "rbp", "x17" },
-    { "ebp", "w17" },
-    { "bp", "x17" },
-    { "bpl", "x17" },
+    { "rsp", "x14" },
+    { "esp", "w14" },
+    { "sp", "x14" },
+    { "spl", "x14" },
+    { "rbp", "x15" },
+    { "ebp", "w15" },
+    { "bp", "x15" },
+    { "bpl", "x15" },
+    { "rsi", "x16" },
+    { "esi", "w16" },
+    { "si", "x16" },
+    { "sil", "x16" },
+    { "rdi", "x17" },
+    { "edi", "w17" },
+    { "di", "x17" },
+    { "dil", "x17" },
     { "r8", "x18" },
     { "r8d", "w18" },
     { "r8w", "x18" },
@@ -867,6 +841,12 @@ void inst_name_pass3(dynarec_native_t* dyn, int ninst, const char* name, rex_t r
     if (dyn->insts[ninst].n.xmm_used || dyn->insts[ninst].n.xmm_unneeded || dyn->insts[ninst].n.xmm_needed) {
         length += sprintf(buf + length, " xmmUsed=%04x/needed=%04x/unneeded=%04x", dyn->insts[ninst].n.xmm_used, dyn->insts[ninst].n.xmm_needed, dyn->insts[ninst].n.xmm_unneeded);
     }
+    if (dyn->insts[ninst].n.xmmh_used || dyn->insts[ninst].n.xmmh_needed || dyn->insts[ninst].n.xmmh_unneeded) {
+        length += sprintf(buf + length, " xmmHused=%04x/needed=%04x/unneeded=%04x", dyn->insts[ninst].n.xmmh_used, dyn->insts[ninst].n.xmmh_needed, dyn->insts[ninst].n.xmmh_unneeded);
+    }
+    if (dyn->insts[ninst].n.xmms_used || dyn->insts[ninst].n.xmms_needed || dyn->insts[ninst].n.xmms_unneeded) {
+        length += sprintf(buf + length, " xmmSused=%04x/needed=%04x/unneeded=%04x", dyn->insts[ninst].n.xmms_used, dyn->insts[ninst].n.xmms_needed, dyn->insts[ninst].n.xmms_unneeded);
+    }
     if (dyn->insts[ninst].n.ymm_used || dyn->insts[ninst].n.ymm_unneeded || dyn->insts[ninst].n.ymm_needed) {
         length += sprintf(buf + length, " ymmUsed=%04x/needed=%04x/unneeded=%04x", dyn->insts[ninst].n.ymm_used, dyn->insts[ninst].n.ymm_needed, dyn->insts[ninst].n.ymm_unneeded);
     }
@@ -909,7 +889,7 @@ void inst_name_pass3(dynarec_native_t* dyn, int ninst, const char* name, rex_t r
         dyn->gdbjit_block = GdbJITBlockAddLine(dyn->gdbjit_block, (dyn->native_start + dyn->insts[ninst].address), inst_name);
     }
     if (BOX64ENV(dynarec_perf_map) && (BOX64ENV(dynarec_perf_map_fd) != -1) && dyn->insts[ninst].size) {
-        writePerfMap(dyn->insts[ninst].x64.addr, dyn->native_start + dyn->insts[ninst].address, dyn->insts[ninst].size / 4, name);
+        writePerfMap(dyn->insts[ninst].x64.addr, dyn->native_start + dyn->insts[ninst].address, dyn->insts[ninst].size, name);
     }
     if(length>sizeof(buf)) printf_log(LOG_NONE, "Warning: buf to small in inst_name_pass3 (%d vs %zd)\n", length, sizeof(buf));
 }
@@ -1233,26 +1213,32 @@ static uint32_t getXYMMMask(dynarec_arm_t* dyn, int ninst)
     return ret;
 }
 
-static void propagateXYMMNeeded(dynarec_arm_t* dyn, int ninst, uint16_t mask_x, uint16_t mask_y)
+static void propagateXYMMNeeded(dynarec_arm_t* dyn, int ninst, uint16_t mask_x, uint16_t mask_y, uint16_t mask_xh, uint16_t mask_xs)
 {
     while(ninst>=0) {
         // removed unneeded regs
         mask_x &= ~dyn->insts[ninst].n.xmm_unneeded;
         mask_y &= ~dyn->insts[ninst].n.ymm_unneeded;
+        mask_xh &= ~dyn->insts[ninst].n.xmmh_unneeded;
+        mask_xs &= ~dyn->insts[ninst].n.xmms_unneeded;
         // removed already needed from mask
         mask_x &= ~dyn->insts[ninst].n.xmm_needed;
         mask_y &= ~dyn->insts[ninst].n.ymm_needed;
+        mask_xh &= ~dyn->insts[ninst].n.xmmh_needed;
+        mask_xs &= ~dyn->insts[ninst].n.xmms_needed;
         // already handled
-        if(!mask_x && !mask_y) return;
+        if(!mask_x && !mask_y && !mask_xh && !mask_xs) return;
         // added the unneeded value
         dyn->insts[ninst].n.xmm_needed |= mask_x;
         dyn->insts[ninst].n.ymm_needed |= mask_y;
+        dyn->insts[ninst].n.xmmh_needed |= mask_xh;
+        dyn->insts[ninst].n.xmms_needed |= mask_xs;
         for(int i=1; i<dyn->insts[ninst].pred_sz; ++i) {
             int j = dyn->insts[ninst].pred[i];
             // barrier or callret, value is needed
             if(!(dyn->insts[j].x64.barrier&BARRIER_FLOAT)
               && !(dyn->insts[j].x64.has_callret))
-                propagateXYMMNeeded(dyn, j, mask_x, mask_y);
+                propagateXYMMNeeded(dyn, j, mask_x, mask_y, mask_xh, mask_xs);
         }
         if(dyn->insts[ninst].pred_sz)
             ninst = dyn->insts[ninst].pred[0];
@@ -1265,25 +1251,31 @@ static void propagateXYMMNeeded(dynarec_arm_t* dyn, int ninst, uint16_t mask_x, 
     }
 }
 
-static void propagateXYMMUneeded(dynarec_arm_t* dyn, int ninst, uint16_t mask_x, uint16_t mask_y)
+static void propagateXYMMUneeded(dynarec_arm_t* dyn, int ninst, uint16_t mask_x, uint16_t mask_y, uint16_t mask_xh, uint16_t mask_xs)
 {
     while(ninst>=0) {
         // removed needed regs
         mask_x &= ~dyn->insts[ninst].n.xmm_needed;
         mask_y &= ~dyn->insts[ninst].n.ymm_needed;
+        mask_xh &= ~dyn->insts[ninst].n.xmmh_needed;
+        mask_xs &= ~dyn->insts[ninst].n.xmms_needed;
         // removed already unneeded from mask
         mask_x &= ~dyn->insts[ninst].n.xmm_unneeded;
         mask_y &= ~dyn->insts[ninst].n.ymm_unneeded;
+        mask_xh &= ~dyn->insts[ninst].n.xmmh_unneeded;
+        mask_xs &= ~dyn->insts[ninst].n.xmms_unneeded;
         // already handled
-        if(!mask_x && !mask_y) return;
+        if(!mask_x && !mask_y && !mask_xh && !mask_xs) return;
         // barrier or callret, value is needed
         if(dyn->insts[ninst].x64.barrier&BARRIER_FLOAT) return;
         if(dyn->insts[ninst].x64.has_callret) return;
         // added the unneeded value
         dyn->insts[ninst].n.xmm_unneeded |= mask_x;
         dyn->insts[ninst].n.ymm_unneeded |= mask_y;
+        dyn->insts[ninst].n.xmmh_unneeded |= mask_xh;
+        dyn->insts[ninst].n.xmms_unneeded |= mask_xs;
         for(int i=1; i<dyn->insts[ninst].pred_sz; ++i)
-            propagateXYMMUneeded(dyn, dyn->insts[ninst].pred[i], mask_x, mask_y);
+            propagateXYMMUneeded(dyn, dyn->insts[ninst].pred[i], mask_x, mask_y, mask_xh, mask_xs);
         if(dyn->insts[ninst].pred_sz)
             ninst = dyn->insts[ninst].pred[0];
         else
@@ -1297,24 +1289,46 @@ void updateUneeded(dynarec_arm_t* dyn)
 
     if(!dyn->use_xmm && !dyn->use_ymm)
         return;
+    // Upper-64 liveness of the low 16 XMM, seeded here and propagated by the same
+    // needed/unneeded passes below used for whole-xmm and the ymm upper-128 lanes.
+    // A scalar SD op touches only the low 64, so it sits in xmm_scalar and is masked
+    // out of xmmh_used; every full-width reader keeps its bit and pins the upper lane
+    // live. An op may zero the upper in place (skipping the x86 upper-preserve) only
+    // where xmmh_unneeded proves the lane dead.
+    // xmms is the same, one dword lower: the upper-96 [127:32] used by scalar-single ops.
+    // A scalar SD op still reads [63:32], so only scalar-single ops (xmm_scalar_single) are
+    // masked out of xmms_used. An SS op may zero the upper-96 in place only where xmms_unneeded
+    // proves it dead.
+    for(int ninst=0; ninst<dyn->size; ++ninst) {
+        dyn->insts[ninst].n.xmmh_used = dyn->insts[ninst].n.xmm_used & ~dyn->insts[ninst].n.xmm_scalar;
+        dyn->insts[ninst].n.xmmh_unneeded = dyn->insts[ninst].n.xmm_unneeded;
+        dyn->insts[ninst].n.xmms_used = dyn->insts[ninst].n.xmm_used & ~dyn->insts[ninst].n.xmm_scalar_single;
+        dyn->insts[ninst].n.xmms_unneeded = dyn->insts[ninst].n.xmm_unneeded;
+    }
     // first propagate the needed regs: those which are used and are not unneeded
     for(int ninst=dyn->size-1; ninst>=0; --ninst) {
         uint16_t xmm_needed = dyn->insts[ninst].n.xmm_used&~dyn->insts[ninst].n.xmm_unneeded;
         uint16_t ymm_needed = dyn->insts[ninst].n.ymm_used&~dyn->insts[ninst].n.ymm_unneeded;
+        uint16_t xmmh_needed = dyn->insts[ninst].n.xmmh_used&~dyn->insts[ninst].n.xmmh_unneeded;
+        uint16_t xmms_needed = dyn->insts[ninst].n.xmms_used&~dyn->insts[ninst].n.xmms_unneeded;
+        // an unresolved exit (float barrier or jump out of the block) can reach code
+        // that reads the full registers, so pin every lane live there, upper-64/96 included
         if((dyn->insts[ninst].x64.barrier&BARRIER_FLOAT) || (dyn->insts[ninst].x64.jmp && (dyn->insts[ninst].x64.jmp_insts==-1)))
         {
             if(dyn->use_xmm) xmm_needed = 0xffff;
             if(dyn->use_ymm) ymm_needed = 0xffff;
+            if(dyn->use_xmm) xmmh_needed = 0xffff;
+            if(dyn->use_xmm) xmms_needed = 0xffff;
         }
-        if(xmm_needed || ymm_needed)
-            propagateXYMMNeeded(dyn, ninst, xmm_needed, ymm_needed);
+        if(xmm_needed || ymm_needed || xmmh_needed || xmms_needed)
+            propagateXYMMNeeded(dyn, ninst, xmm_needed, ymm_needed, xmmh_needed, xmms_needed);
 
     }
     // then proagate the unneeded one: those which are not needed (not used anymore and will be overwritten)
     for(int ninst=dyn->size-1; ninst>=0; --ninst) {
-        if(dyn->insts[ninst].n.xmm_unneeded || dyn->insts[ninst].n.ymm_unneeded) {
+        if(dyn->insts[ninst].n.xmm_unneeded || dyn->insts[ninst].n.ymm_unneeded || dyn->insts[ninst].n.xmmh_unneeded || dyn->insts[ninst].n.xmms_unneeded) {
             for(int i=0; i<dyn->insts[ninst].pred_sz; ++i)
-                propagateXYMMUneeded(dyn, dyn->insts[ninst].pred[i], dyn->insts[ninst].n.xmm_unneeded, dyn->insts[ninst].n.ymm_unneeded);
+                propagateXYMMUneeded(dyn, dyn->insts[ninst].pred[i], dyn->insts[ninst].n.xmm_unneeded, dyn->insts[ninst].n.ymm_unneeded, dyn->insts[ninst].n.xmmh_unneeded, dyn->insts[ninst].n.xmms_unneeded);
         }
     }
     // try to add some preload of XYMM on jump were it would make sense

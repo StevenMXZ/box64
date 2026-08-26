@@ -2263,7 +2263,6 @@ wrappedcairo:
 - pFXLpii:
   - cairo_xlib_surface_create
   - cairo_xlib_surface_create_for_bitmap
-wrappedcrashhandler:
 wrappedcurl:
 - iFpup:
   - curl_multi_setopt
@@ -2477,6 +2476,8 @@ wrappedlibc:
 - vFp:
   - _ZGTtdlPv
 - iEv:
+  - __getpagesize
+  - getpagesize
   - sched_getcpu
 - iEi:
   - __close_nocancel
@@ -3016,6 +3017,7 @@ wrappedlibm:
   - cpowf
 wrappedlibogg:
 - vFp:
+  - ogg_packet_clear
   - oggpackB_reset
   - oggpackB_writeclear
   - oggpackB_writeinit

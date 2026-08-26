@@ -99,9 +99,13 @@ void freeVulkanOverlay(my_vulkanoverlay_t* v)
     kh_cstr_t k;
     kh_foreach_ref(v->wrappers, k, w, *w->x64 = 0;);
     kh_destroy(x64wrappers, v->wrappers);
+    v->wrappers = NULL;
     box_free((void*)v->lib_name);
     v->lib_name = NULL;
     v->idx = 0;
+    v->handle = NULL;
+    v->functions = NULL;
+    v->n_functions = 0;
 }
 
 #define MAPNAME3(N,M) N##M
@@ -206,6 +210,7 @@ void freeVulkanOverlay(my_vulkanoverlay_t* v)
 #define GO_vFpUuuup(A, B, N)   static void my_##A##_##N(void* a, uint64_t b, uint32_t c, uint32_t d, uint32_t e, void* f) {F6(A, SIGFMT(B), N);}
 #define GO_vFpupuuu(A, B, N)   static void my_##A##_##N(void* a, uint32_t b, void* c, uint32_t d, uint32_t e, uint32_t f) {F6(A, SIGFMT(B), N);}
 #define GO_vFpuuuuu(A, B, N)   static void my_##A##_##N(void* a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f) {F6(A, SIGFMT(B), N);}
+#define GO_vFpuUUuu(A, B, N)   static void my_##A##_##N(void* a, uint32_t b, uint64_t c, uint64_t d, uint32_t e, uint32_t f) {F6(A, SIGFMT(B), N);}
 #define GO_vFpUiUiup(A, B, N)  static void my_##A##_##N(void* a, uint64_t b, int c, uint64_t d, int e, uint32_t f, void* g) {F7(A, SIGFMT(B), N);}
 #define GO_vFpuupppp(A, B, N)  static void my_##A##_##N(void* a, uint32_t b, uint32_t c, void* d, void* e, void* f, void* g) {F7(A, SIGFMT(B), N);}
 #define GO_vFpUuupup(A, B, N)  static void my_##A##_##N(void* a, uint64_t b, uint32_t c, uint32_t d, void* e, uint32_t f, void* g) {F7(A, SIGFMT(B), N);}
@@ -633,6 +638,7 @@ CREATE(vkCreateDebugUtilsMessengerEXT)  // Needs better wrapping?
 CREATE(vkRegisterDeviceEventEXT)
 CREATE(vkCreateWin32SurfaceKHR)
 CREATE(vkCreateShaderInstrumentationARM)
+CREATE(vkCreateExternalComputeQueueNV)
 #undef CREATE
 #undef GO
 // DESTROY64
@@ -705,6 +711,7 @@ DESTROY(vkDestroyTensorARM)
 DESTROY(vkDestroyTensorViewARM)
 DESTROY(vkDestroyDataGraphPipelineSessionARM)
 DESTROY(vkDestroyShaderInstrumentationARM)
+DESTROY(vkDestroyExternalComputeQueueNV)
 
 #undef DESTROY
 #undef GO
@@ -869,22 +876,22 @@ void* LoadVulkanOverlay(const char* path, int flags)
         } else if(getenv("HOME")) {
             snprintf(tmp, sizeof(tmp)-1, "%s/.config/vulkan/implicit_layer.d/*.json", getenv("HOME"));
         }
-        int flags = GLOB_APPEND;
-        if(strlen(tmp)) glob(tmp, 0, NULL, &pglob); else flags = 0;
+        int glob_flags = GLOB_APPEND;
+        if(strlen(tmp)) glob(tmp, 0, NULL, &pglob); else glob_flags = 0;
         if(getenv("XDG_CONFIG_DIRS")) {
             snprintf(tmp, sizeof(tmp)-1, "%s/vulkan/implicit_layer.d/*.json", getenv("XDG_CONFIG_DIRS"));
         } else {
             snprintf(tmp, sizeof(tmp)-1, "/etc/xdg/vulkan/implicit_layer.d/*.json");
         }
-        glob(tmp, flags, NULL, &pglob);
-        flags = GLOB_APPEND;
+        glob(tmp, glob_flags, NULL, &pglob);
+        glob_flags = GLOB_APPEND;
         tmp[0] = 0;
         if(getenv("XDG_DATA_HOME")) {
             snprintf(tmp, sizeof(tmp)-1, "%s/vulkan/implicit_layer.d/*.json", getenv("XDG_DATA_HOME"));
         } else if(getenv("HOME")) {
             snprintf(tmp, sizeof(tmp)-1, "%s/.local/share/vulkan/implicit_layer.d/*.json", getenv("HOME"));
         }
-        glob(tmp, flags, NULL, &pglob);
+        glob(tmp, glob_flags, NULL, &pglob);
         // should also search XDG_DATA_DIRS, but it's a list, so a bit anoying to do...
 
         // now, look through all the json collected to find one that reference the lib
@@ -923,7 +930,7 @@ void* LoadVulkanOverlay(const char* path, int flags)
         globfree(&pglob);
         int whitelist = 0;
         if(!json) {
-            char* p = strrchr(path, '/');
+            const char* p = strrchr(path, '/');
             if(!p) p = (char*)path; else ++p;
             if(!strcmp(p, "libvk_swiftshader.so"))
                 whitelist = 1;
